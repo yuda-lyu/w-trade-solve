@@ -1,0 +1,260 @@
+import assert from 'assert'
+import fs from 'fs'
+import path from 'path'
+import estimKeys from '../src/estimKeys.mjs'
+import readStrategies from '../src/readStrategies.mjs'
+import genTid from '../src/genTid.mjs'
+import cont from '../src/cont.mjs'
+import ott from '../src/ott.mjs'
+import { buildFdTmp, buildFdData, buildSt, keySettings } from './unit-setup.mjs'
+
+
+//規格來源: src/estimKeys.mjs
+//  estimKeys(ott, st, fdOhlc, fdParam, timeStart, timeEnd, mode, keys, fdData, opt):
+//    設計變數為[止損, 止盈, ...各key門檻], 止損止盈由opt.thsSl與opt.thsTp之百分比清單除以100離散取值
+//    各key門檻由rang(-2,2,40)之41點各自平移+10與-10為82點, 解值>0代表'>'條件、<0代表'<'條件, 還原時扣除平移值
+//    以omlPSO求解, 各次以runStrategy回測並經calcFitness計算適應值
+//    滿足thNumTrade、thRWin與thREquivalentCumuProfitOrLossFinalNormYear三門檻者, 以genStrategyFileName存入fdData
+//    同tkid(tid+級距)已有策略時, 僅於等效年化盈虧更佳時抽換並刪除較差者, 故同tkid恆僅一檔
+//    fdData不存在時自動建立
+
+
+let fdTmp = buildFdTmp('estimKeys')
+
+
+let st = buildSt()
+
+
+//optBase: 三門檻皆放寬, 使求解過程之可用參數組必然寫出策略檔
+let optBase = {
+    keySettings,
+    thsTp: [3],
+    thsSl: [2],
+    thNumTrade: 1,
+    thRWin: 0,
+    thREquivalentCumuProfitOrLossFinalNormYear: -1e9,
+}
+
+
+describe('estimKeys', function() {
+
+    after(function() {
+        fs.rmSync(fdTmp, { recursive: true, force: true })
+    })
+
+    describe('求解與策略儲存', function() {
+
+        let keys = ['btc_4hr_ma_1day']
+        let d = null
+        let m = null
+
+        before(async function() {
+            this.timeout(120000)
+            d = buildFdData(fdTmp, 'solve', keys, { n: 20 })
+            m = await estimKeys(ott, st, d.fdOhlc, d.fdParam, d.timeStart, d.timeEnd, 'long', keys, d.fdData, optBase)
+        })
+
+        it('回傳omlPSO之求解結果, 含bestSolution與停止資訊', function() {
+            assert.ok(typeof m === 'object' && m !== null)
+            assert.ok(Number.isFinite(m.bestSolution.fitness), `fitness須為有限數: ${m.bestSolution.fitness}`)
+            assert.ok(typeof m.stopMode === 'string' && m.stopMode.length > 0)
+            assert.ok(m.stopExecutions > 0)
+        })
+
+        it('設計變數個數為2(止損止盈)加上keys個數', function() {
+            assert.strictEqual(m.bestSolution.ps.length, 2 + keys.length)
+        })
+
+        it('止損與止盈之解值取自opt.thsSl與opt.thsTp除以100', function() {
+            //thsSl=[2] → 0.02, thsTp=[3] → 0.03, 各僅1點故解值唯一
+            assert.strictEqual(m.bestSolution.ps[0].value, 0.02)
+            assert.strictEqual(m.bestSolution.ps[1].value, 0.03)
+        })
+
+        it('各key門檻之解值落於平移後之兩區間, 絕對值介於8至12', function() {
+            //rang(-2,2,40)之值域[-2,2], 平移量vdir=10, 故'>'組為[8,12]、'<'組為[-12,-8]
+            m.bestSolution.ps.slice(2).forEach((p, i) => {
+                assert.ok(Math.abs(p.value) >= 8 - 1e-9 && Math.abs(p.value) <= 12 + 1e-9, `第${i}個門檻解值 ${p.value} 超出範圍`)
+            })
+        })
+
+        it('fdData不存在時自動建立, 並寫出策略檔', function() {
+            assert.ok(fs.existsSync(d.fdData), 'fdData須被建立')
+            let ss = readStrategies(d.fdData)
+            assert.ok(ss.length > 0, '門檻放寬時須有策略檔寫出')
+        })
+
+        it('策略檔名之tid段等同於genTid之輸出', function() {
+            let tid = genTid('btc', '4hr', 'long', keys)
+            let ss = readStrategies(d.fdData)
+            ss.forEach((s) => {
+                assert.strictEqual(s.tid, tid, `檔名 ${s.name}`)
+            })
+        })
+
+        it('同tkid恆僅保留一檔', function() {
+            let ss = readStrategies(d.fdData)
+            let tkids = ss.map((v) => {
+                return v.tkid
+            })
+            assert.strictEqual(new Set(tkids).size, tkids.length, `tkid重複: ${tkids}`)
+        })
+
+        it('策略檔內容含策略、回測摘要與適應值', function() {
+            let ss = readStrategies(d.fdData, { readContent: true })
+            ss.forEach((s) => {
+                let c = s.data
+                assert.strictEqual(c.tid, s.tid)
+                assert.ok(typeof c.sid === 'string' && c.sid.length > 0)
+                assert.strictEqual(c.name, 'btc')
+                assert.strictEqual(c.symbol, 'BTCUSDT')
+                assert.strictEqual(c.interval, '4hr')
+                assert.strictEqual(c.mode, 'long')
+                assert.strictEqual(c.keyOhlc, 'btc_price_4hr') //`${name}_price_${interval}`
+                assert.ok(Number.isFinite(c.fitness))
+                assert.ok(typeof c.summary === 'object' && c.summary !== null)
+            })
+        })
+
+        it('策略檔內之conds各元素為{key,sym,th}, key取自keys, sym為>或<, th落於[-2,2]', function() {
+            let ss = readStrategies(d.fdData, { readContent: true })
+            ss.forEach((s) => {
+                assert.strictEqual(s.data.conds.length, keys.length)
+                s.data.conds.forEach((cond) => {
+                    assert.ok(keys.includes(cond.key), `key[${cond.key}]不在keys內`)
+                    assert.ok(cond.sym === '>' || cond.sym === '<', `sym[${cond.sym}]非預期`)
+                    assert.ok(cond.th >= -2 - 1e-9 && cond.th <= 2 + 1e-9, `th[${cond.th}]超出[-2,2]`)
+                })
+            })
+        })
+
+        it('策略檔內之settings止盈止損等同於opt所給之百分比除以100', function() {
+            let ss = readStrategies(d.fdData, { readContent: true })
+            ss.forEach((s) => {
+                assert.strictEqual(s.data.settings.rStopLoss, 0.02)
+                assert.strictEqual(s.data.settings.rTakeProfit, 0.03)
+                assert.strictEqual(s.data.settings.uIni, 1000)
+                assert.strictEqual(s.data.settings.uTrade, 1)
+                assert.strictEqual(s.data.settings.rFee, 0.0005)
+            })
+        })
+
+        it('策略檔之級距段與檔內summary.numTrade一致', function() {
+            let ss = readStrategies(d.fdData, { readContent: true })
+            ss.forEach((s) => {
+                let numTrade = Number(s.data.summary.numTrade)
+                assert.ok(numTrade >= 1, `已存策略之交易次數須達thNumTrade: ${numTrade}`)
+            })
+        })
+
+        it('策略檔之等效年化盈虧段與檔內summary一致', function() {
+            let ss = readStrategies(d.fdData, { readContent: true })
+            ss.forEach((s) => {
+                assert.strictEqual(s.rEquivalentCumuProfitOrLossFinalNormYear, s.data.summary.rEquivalentCumuProfitOrLossFinalNormYear)
+            })
+        })
+
+    })
+
+    describe('儲存門檻', function() {
+
+        it('交易次數門檻無法達成時不寫出任何策略檔', async function() {
+            this.timeout(120000)
+            let keys = ['btc_4hr_ma_1day']
+            let d = buildFdData(fdTmp, 'nosave', keys, { n: 20 })
+
+            await estimKeys(ott, st, d.fdOhlc, d.fdParam, d.timeStart, d.timeEnd, 'long', keys, d.fdData, {
+                ...optBase,
+                thNumTrade: 1e9, //資料僅20根K線, 無從達成
+            })
+
+            assert.deepStrictEqual(readStrategies(d.fdData), [])
+        })
+
+    })
+
+    describe('輸入檢核', function() {
+
+        let keys = ['btc_4hr_ma_1day']
+        let d = null
+
+        before(function() {
+            d = buildFdData(fdTmp, 'check', keys, { n: 10 })
+        })
+
+        //call: 以合法引數為底, 依opt覆寫指定引數後呼叫
+        let call = (ov = {}) => {
+            let a = {
+                fdOhlc: d.fdOhlc,
+                fdParam: d.fdParam,
+                timeStart: d.timeStart,
+                timeEnd: d.timeEnd,
+                mode: 'long',
+                keys,
+                fdData: d.fdData,
+                opt: optBase,
+                ...ov,
+            }
+            return estimKeys(ott, st, a.fdOhlc, a.fdParam, a.timeStart, a.timeEnd, a.mode, a.keys, a.fdData, a.opt)
+        }
+
+        it('fdOhlc非有效字串時reject', async function() {
+            await assert.rejects(call({ fdOhlc: '' }), /invalid fdOhlc/)
+            await assert.rejects(call({ fdOhlc: null }), /invalid fdOhlc/)
+        })
+
+        it('fdParam非有效字串時reject', async function() {
+            await assert.rejects(call({ fdParam: '' }), /invalid fdParam/)
+        })
+
+        it('timeStart非有效字串時reject', async function() {
+            await assert.rejects(call({ timeStart: '' }), /invalid timeStart/)
+        })
+
+        it('timeEnd非有效字串時reject', async function() {
+            await assert.rejects(call({ timeEnd: '' }), /invalid timeEnd/)
+        })
+
+        it('mode非long或short時reject', async function() {
+            await assert.rejects(call({ mode: 'buy' }), /invalid mode/)
+            await assert.rejects(call({ mode: '' }), /invalid mode/)
+        })
+
+        it('keys非有效陣列時reject', async function() {
+            await assert.rejects(call({ keys: [] }), /invalid keys/)
+            await assert.rejects(call({ keys: 'aa' }), /invalid keys/)
+        })
+
+        it('fdData非有效字串時reject', async function() {
+            await assert.rejects(call({ fdData: '' }), /invalid fdData/)
+        })
+
+        it('opt.keySettings非有效字串時reject', async function() {
+            await assert.rejects(call({ opt: {} }), /invalid opt.keySettings/)
+            await assert.rejects(call({ opt: { keySettings: 123 } }), /invalid opt.keySettings/)
+        })
+
+        it('回測時間範圍超出資料範圍時reject', async function() {
+            //w-data-tdprovide之getTimeSeriesFullByTimeRange檢核起訖時間
+            await assert.rejects(call({ timeStart: '1990-01-01T00:00:00' }), /timeStartData/)
+            await assert.rejects(call({ timeEnd: '2099-01-01T00:00:00' }), /timeEndData/)
+        })
+
+    })
+
+    describe('策略檔名規則', function() {
+
+        it('檔名恰可由dlmPkgs切為3段', function() {
+            //由求解階段所產生之檔案驗證
+            let fdData = path.resolve(fdTmp, 'solve', 'data-strategy')
+            let fns = fs.readdirSync(fdData)
+            assert.ok(fns.length > 0)
+            fns.forEach((fn) => {
+                assert.strictEqual(fn.slice(0, -5).split(cont.dlmPkgs).length, 3, `檔名 ${fn}`)
+                assert.ok(fn.endsWith('.json'), `檔名 ${fn}`)
+            })
+        })
+
+    })
+
+})
