@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    
+    <meta charset="utf-8">
+    <title>calcFitness.mjs - Documentation</title>
+    
+    
+    <script src="scripts/prettify/prettify.js"></script>
+    <script src="scripts/prettify/lang-css.js"></script>
+    <!--[if lt IE 9]>
+      <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+    <![endif]-->
+    <link type="text/css" rel="stylesheet" href="styles/prettify.css">
+    <link type="text/css" rel="stylesheet" href="styles/jsdoc.css">
+    <script src="scripts/nav.js" defer></script>
+    
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body>
+
+<input type="checkbox" id="nav-trigger" class="nav-trigger" />
+<label for="nav-trigger" class="navicon-button x">
+  <div class="navicon"></div>
+</label>
+
+<label for="nav-trigger" class="overlay"></label>
+
+<nav >
+    
+    
+    <h2><a href="index.html">Home</a></h2><h3>Global</h3><ul><li><a href="global.html#calcFitness">calcFitness</a></li><li><a href="global.html#calcLevelNumTrade">calcLevelNumTrade</a></li><li><a href="global.html#cont">cont</a></li><li><a href="global.html#estimComps">estimComps</a></li><li><a href="global.html#estimFinder">estimFinder</a></li><li><a href="global.html#estimKeys">estimKeys</a></li><li><a href="global.html#estimPicks">estimPicks</a></li><li><a href="global.html#genSid">genSid</a></li><li><a href="global.html#genStrategyFileName">genStrategyFileName</a></li><li><a href="global.html#genTid">genTid</a></li><li><a href="global.html#nowTpeStr">nowTpeStr</a></li><li><a href="global.html#nowTpeStrp">nowTpeStrp</a></li><li><a href="global.html#ott">ott</a></li><li><a href="global.html#p2r">p2r</a></li><li><a href="global.html#readStrategies">readStrategies</a></li></ul>
+    
+</nav>
+
+<div id="main">
+    
+    <h1 class="page-title">calcFitness.mjs</h1>
+    
+
+    
+
+
+
+    
+    <section>
+        <article>
+            <pre class="prettyprint source linenums"><code>import cint from 'wsemi/src/cint.mjs'
+import p2r from './p2r.mjs'
+
+
+/**
+ * 計算策略適應值fitness
+ *
+ * 供最佳化求解使用之目標函數值，數值越小代表策略越佳
+ * 由勝率與最終等效年化盈虧兩者組成: 勝率rWin限縮至[0,1]，等效年化盈虧rEquivalentCumuProfitOrLossFinalNormYear限縮至[0,0.5]再正規化至[0,1]，兩者皆轉為越小越好後，以權重2與1加權求和，故無懲罰時fitness落於[0,3]
+ * 交易次數為0時加上懲罰值1000000，最終累計盈虧金額(summary.uEquityFinal-settings.uIni)小於等於0時再加上懲罰值1000000，故兩者皆觸發時可達2000000以上
+ *
+ * Unit Test: {@link https://github.com/yuda-lyu/w-trade-solve/blob/master/test/unit-calcFitness.test.mjs Github}
+ * @function
+ * @param {Object} settings 輸入策略設定物件，需含uIni(初始資金)欄位
+ * @param {Object} summary 輸入回測統計摘要物件，需含numTrade(交易次數)、uEquityFinal(最終權益金額)、rWin(勝率百分比字串)、rEquivalentCumuProfitOrLossFinalNormYear(最終等效年化盈虧百分比字串)欄位
+ * @returns {Number} 回傳適應值數值，越小代表策略越佳
+ * @example
+ *
+ * let settings = { uIni: 1000 }
+ *
+ * //勝率60%, 等效年化盈虧25%(正規化後0.5), fitness = 2*(1-0.6) + 1*(1-0.5) = 1.3
+ * let summary = {
+ *     numTrade: 30,
+ *     uEquityFinal: 1200,
+ *     rWin: '60%',
+ *     rEquivalentCumuProfitOrLossFinalNormYear: '25%',
+ * }
+ * console.log(calcFitness(settings, summary))
+ * // => 1.3
+ *
+ * //無交易且無獲利時, 兩懲罰值皆觸發
+ * let summaryNone = {
+ *     numTrade: 0,
+ *     uEquityFinal: 1000,
+ *     rWin: '',
+ *     rEquivalentCumuProfitOrLossFinalNormYear: '',
+ * }
+ * console.log(calcFitness(settings, summaryNone))
+ * // => 2000003
+ *
+ */
+let calcFitness = (settings, summary) => {
+
+    //numTrade
+    let numTrade = cint(summary.numTrade)
+
+    //uIni
+    let uIni = settings.uIni
+
+    // //uTradeAllMax
+    // let uTradeAllMax = summary.uTradeAllMax
+    // // console.log('uTradeAllMax', uTradeAllMax)
+
+    // //uDrawdownMax
+    // let uDrawdownMax = summary.uDrawdownMax
+
+    //uEquityFinal
+    let uEquityFinal = summary.uEquityFinal
+
+    //uCumuProfitOrLossFinal
+    let uCumuProfitOrLossFinal = uEquityFinal - uIni
+    // console.log('uCumuProfitOrLossFinal', uCumuProfitOrLossFinal)
+
+    //rEquivalentCumuProfitOrLossFinalNormYear, 等效年化報酬率
+    let rEquivalentCumuProfitOrLossFinalNormYear = p2r(summary.rEquivalentCumuProfitOrLossFinalNormYear)
+    rEquivalentCumuProfitOrLossFinalNormYear = Math.min(Math.max(rEquivalentCumuProfitOrLossFinalNormYear, 0), 0.5) //最大限制為年化50% (依實際年化分布調整)
+    rEquivalentCumuProfitOrLossFinalNormYear /= 0.5 //正規化最大值1
+
+    //_rEquivalentCumuProfitOrLossFinalNormYear, 等效年化報酬率越高越好, 須轉換至越低越好
+    let _rEquivalentCumuProfitOrLossFinalNormYear = 1 - rEquivalentCumuProfitOrLossFinalNormYear
+    // console.log('_rEquivalentCumuProfitOrLossFinalNormYear', _rEquivalentCumuProfitOrLossFinalNormYear)
+
+    // //rCumuProfitOrLossFinal
+    // let rCumuProfitOrLossFinal = p2r(summary.rCumuProfitOrLossFinal)
+
+    // //_rCumuProfitOrLossFinal, 盈虧越高須轉越低越好
+    // let _rCumuProfitOrLossFinal = 3000 - Math.max(rCumuProfitOrLossFinal, 0)
+    // if (_rCumuProfitOrLossFinal &lt; 0) {
+    //     throw new Error(`最終盈虧比例[${_rCumuProfitOrLossFinal}]非預期過高`)
+    // }
+    // if (rCumuProfitOrLossFinal &lt;= 0) {
+    //     _rCumuProfitOrLossFinal += 300000 - rCumuProfitOrLossFinal //懲罰值
+    // }
+
+    // //rDrawdownMax
+    // let rDrawdownMax = p2r(summary.rDrawdownMax)
+    // rDrawdownMax = Math.min(Math.max(rDrawdownMax, 0), 1)
+
+    // //_rDrawdownMax, 最大回撤率不用轉換, 越低越好
+    // let _rDrawdownMax = rDrawdownMax
+
+    // //rSharpe
+    // let rSharpe = w.cdbl(summary.rSharpe)
+
+    // //_rSharpe, 夏普值越高須轉越低越好
+    // let _rSharpe = 5 - Math.min(Math.max(rSharpe, 0), 5) //夏普值理論上可無限大, 故須限制範圍
+    // if (_rSharpe &lt; 0) {
+    //     throw new Error(`夏普值[${rSharpe}]非預期過高`)
+    // }
+    // if (rSharpe &lt;= 0) {
+    //     _rSharpe += 100000 - rSharpe //懲罰值
+    // }
+
+    //ratioWin
+    let ratioWin = p2r(summary.rWin)
+    ratioWin = Math.min(Math.max(ratioWin, 0), 1)
+
+    //_ratioWin, 勝率越高越好, 須轉換至越低越好
+    let _ratioWin = 1 - ratioWin
+
+    // //ratioKeep
+    // let ratioKeep = p2r(summary.rTradeAllMax)
+
+    //fitness
+    let fitness = 0
+    // fitness += 3 * _rCumuProfitOrLossFinal
+    // fitness += 2 * _rDrawdownMax
+    // fitness += 2 * _rSharpe
+    fitness += 2 * _ratioWin
+    fitness += 1 * _rEquivalentCumuProfitOrLossFinalNormYear
+    if (numTrade === 0) {
+        fitness += 1000000 //懲罰值
+    }
+    if (uCumuProfitOrLossFinal &lt;= 0) {
+        fitness += 1000000 //懲罰值
+    }
+    // console.log('fitness', fitness)
+
+    return fitness
+}
+
+
+export default calcFitness
+</code></pre>
+        </article>
+    </section>
+
+
+
+
+    
+    
+</div>
+
+<br class="clear">
+
+<footer>
+    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 4.0.5</a> on Tue Aug 04 2026 23:21:49 GMT+0800 (台北標準時間) using the <a href="https://github.com/clenemt/docdash">docdash</a> theme.
+</footer>
+
+<script>prettyPrint();</script>
+<script src="scripts/polyfill.js"></script>
+<script src="scripts/linenumber.js"></script>
+
+
+
+</body>
+</html>
