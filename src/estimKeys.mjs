@@ -35,6 +35,8 @@ import genStrategyFileName from './genStrategyFileName.mjs'
  * 各key門檻取值範圍為[-thLim,thLim]切為thLim*20段，並各自平移+vdir與-vdir(vdir=thLim*5)為兩組，使解值恆大於0代表'>'條件、恆小於0代表'<'條件，還原時再扣除平移值，故單一設計變數即同時涵蓋大於與小於兩種條件
  * 以omlPSO粒子群最佳化求解，各次計算皆以w-trade-backtest之runStrategy回測並經calcFitness計算適應值
  * 各次計算結果若同時滿足交易次數、勝率與最終等效年化盈虧三門檻，則以genStrategyFileName產生檔名存入fdData；同tid且同交易次數級距(tkid)已有策略時，僅於最終等效年化盈虧更佳時抽換，並刪除較差者
+ * opt除下列各欄位外，其餘欄位皆原樣傳遞至omlPSO，兩者欄位名稱無重疊，故可一併給予omlPSO之求解設定，包含Nl(最大總迴圈數，預設10000)、Np(粒子數，預設40)、NContiguous(最佳解連續未更新次數上限，預設100)、NRepeat、NCore、ModeOutLimit、UseRepeat、UseImmigration、LocalSearchMethod、funGetBetter、funEndLoop、funGenerationBefore、funGenerationAfter與psoBeta、psoGamma、psoInertiaMin、psoC1Start、psoC1End、psoC1Dynamic、psoC2Start、psoC2End、psoC2Dynamic
+ * omlPSO預設之求解量甚大(單一key約需1萬7千次回測)，僅需快速試算時可調小Np與NContiguous
  * fdOhlc、fdParam、timeStart、timeEnd、keys、fdData無效或mode非'long'或'short'時throw
  *
  * Unit Test: {@link https://github.com/yuda-lyu/w-trade-solve/blob/master/test/unit-estimKeys.test.mjs Github}
@@ -48,7 +50,7 @@ import genStrategyFileName from './genStrategyFileName.mjs'
  * @param {String} mode 輸入交易方向字串，可選'long'或'short'
  * @param {Array} keys 輸入待率定門檻之指標key字串陣列
  * @param {String} fdData 輸入儲存策略資料夾字串，不存在時自動建立
- * @param {Object} [opt={}] 輸入設定物件，預設{}
+ * @param {Object} [opt={}] 輸入設定物件，預設{}，全部欄位皆傳遞至omlPSO，故可另給Nl、Np、NContiguous等omlPSO之設定
  * @param {String} opt.keySettings 輸入取用st內設定之鍵字串，例如'btc4hr'代表取用st.btc4hr.name、st.btc4hr.symbol與st.btc4hr.interval
  * @param {Array} [opt.thsTp=[1,2,3,4,5,6,7,8,9,10]] 輸入止盈門檻百分比數值陣列，預設[1,2,3,4,5,6,7,8,9,10]
  * @param {Array} [opt.thsSl=[1,2,3,4,5,6,7,8,9,10]] 輸入止損門檻百分比數值陣列，預設[1,2,3,4,5,6,7,8,9,10]
@@ -56,7 +58,7 @@ import genStrategyFileName from './genStrategyFileName.mjs'
  * @param {Number} [opt.thRWin=0.5] 輸入策略須儲存之最低勝率比例數值，預設0.5
  * @param {Number} [opt.thREquivalentCumuProfitOrLossFinalNormYear=0.15] 輸入策略須儲存之最低最終等效年化盈虧比例數值，預設0.15
  * @param {Boolean} [opt.useShowLog=false] 輸入是否顯示求解過程log布林值，預設false
- * @returns {Promise} 回傳Promise，resolve為omlPSO之求解結果物件，含bestSolution、stopMode、stopIteration與stopExecutions等欄位
+ * @returns {Promise} 回傳Promise，resolve為omlPSO之求解結果物件，含bestSolution(最佳解，內有ps設計變數陣列與fitness適應值)、stopMode(觸發停止之機制字串)、stopIteration(停止時之迴圈數)與stopExecutions(停止時之核心分析次數)等欄位
  * @example
  *
  * import ott from './src/ott.mjs'
@@ -81,6 +83,19 @@ import genStrategyFileName from './genStrategyFileName.mjs'
  * })
  * console.log(m.bestSolution.fitness)
  * // => 1.0325
+ *
+ * //可一併給予omlPSO之求解設定, 縮小Np與NContiguous即可快速試算
+ * let mQuick = await estimKeys(ott, st, './data/ohlc', './data/param', '2022-07-01T00:00:00', '2025-04-08T00:00:00', 'long', keys, './data/strategy', {
+ *     keySettings: 'btc4hr',
+ *     thsTp: [1, 2, 3],
+ *     thsSl: [1, 2, 3],
+ *     Np: 8, //粒子數, 預設40
+ *     NContiguous: 5, //最佳解連續未更新次數上限, 預設100
+ * })
+ * console.log(mQuick.stopMode)
+ * // => 'stop by iContinue[5] >= NContiguous[5]'
+ * console.log(mQuick.stopExecutions) //核心分析次數, 較預設設定大幅減少, 因求解為隨機故每次不同
+ * // => 357
  *
  */
 let estimKeys = async (ott, st, fdOhlc, fdParam, timeStart, timeEnd, mode, keys, fdData, opt = {}) => {
@@ -483,6 +498,7 @@ let estimKeys = async (ott, st, fdOhlc, fdParam, timeStart, timeEnd, mode, keys,
         // funGenerationBefore,
         // funGenerationAfter,
         // funGetBetter,
+        ...opt,
     })
     if (useShowLog) {
         // console.log('m', m)

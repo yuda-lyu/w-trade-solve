@@ -61,6 +61,10 @@ describe('estimKeys', function() {
             assert.ok(m.stopExecutions > 0)
         })
 
+        it('未給omlPSO設定時採其預設值, 以NContiguous=100停止', function() {
+            assert.match(m.stopMode, /NContiguous\[100\]$/, `實得: ${m.stopMode}`)
+        })
+
         it('設計變數個數為2(止損止盈)加上keys個數', function() {
             assert.strictEqual(m.bestSolution.ps.length, 2 + keys.length)
         })
@@ -169,6 +173,148 @@ describe('estimKeys', function() {
             })
 
             assert.deepStrictEqual(readStrategies(d.fdData), [])
+        })
+
+    })
+
+    describe('omlPSO設定傳遞', function() {
+
+        //opt除estimKeys自身欄位外皆原樣傳遞至omlPSO, 兩者欄位名稱無重疊
+        //  停止機制優先序為Nl > NContiguous > NCore, 各以stopMode字串標明
+        //  以下皆縮小Np並關閉再搜尋與移民策略, 使各案例快速完成
+
+        let keys = ['btc_4hr_ma_1day']
+        let d = null
+
+        before(function() {
+            d = buildFdData(fdTmp, 'pso', keys, { n: 20 })
+        })
+
+        //optPso: 縮小求解量之共用PSO設定
+        let optPso = {
+            Np: 8,
+            UseRepeat: false,
+            UseImmigration: false,
+        }
+
+        //call: 以獨立之策略資料夾執行求解
+        let call = (tag, extra = {}) => {
+            let fdData = path.resolve(fdTmp, 'pso', `s-${tag}`)
+            return estimKeys(ott, st, d.fdOhlc, d.fdParam, d.timeStart, d.timeEnd, 'long', keys, fdData, {
+                ...optBase,
+                ...optPso,
+                ...extra,
+            })
+        }
+
+        it('給NContiguous時以最佳解連續未更新次數達該值而停止', async function() {
+            let m = await call('ncontiguous', { NContiguous: 5 })
+            assert.match(m.stopMode, /^stop by iContinue\[5\] >= NContiguous\[5\]$/, `實得: ${m.stopMode}`)
+        })
+
+        it('給Nl時以迴圈數達該值而停止, stopIteration即為Nl', async function() {
+            //迴圈數自0起算, 停止判準為i >= Nl
+            let m = await call('nl', { Nl: 3 })
+            assert.match(m.stopMode, /^stop by Nl\[3\]$/, `實得: ${m.stopMode}`)
+            assert.strictEqual(m.stopIteration, 3)
+        })
+
+        it('給NCore時以核心分析次數達該值而停止', async function() {
+            //NCore為最低優先序, 故須將Nl與NContiguous放大使其不先觸發
+            let m = await call('ncore', { NCore: 50, Nl: 1e6, NContiguous: 1e6 })
+            assert.match(m.stopMode, /NCore\[50\]$/, `實得: ${m.stopMode}`)
+            assert.ok(m.stopExecutions >= 50, `核心分析次數 ${m.stopExecutions} 須達NCore`)
+        })
+
+        it('縮小NContiguous可大幅降低核心分析次數', async function() {
+            //預設NContiguous為100, 縮小至5後求解量須明顯減少
+            let m = await call('less', { NContiguous: 5 })
+            assert.ok(m.stopExecutions < 5000, `核心分析次數 ${m.stopExecutions} 未如預期減少`)
+        })
+
+        it('funGenerationBefore與funGenerationAfter每代成對呼叫, funEndLoop於末代不呼叫', async function() {
+            //funGenerationAfter置於停止判斷之前故與before成對, funEndLoop置於停止判斷之後故少一次
+            let nBefore = 0
+            let nAfter = 0
+            let nEndLoop = 0
+            await call('hooks', {
+                Nl: 3,
+                funGenerationBefore: () => {
+                    nBefore++
+                },
+                funGenerationAfter: () => {
+                    nAfter++
+                },
+                funEndLoop: () => {
+                    nEndLoop++
+                },
+            })
+            assert.ok(nBefore >= 1, `funGenerationBefore未被呼叫`)
+            assert.strictEqual(nAfter, nBefore, `after ${nAfter} 與 before ${nBefore} 未成對`)
+            assert.strictEqual(nEndLoop, nBefore - 1, `endLoop ${nEndLoop} 須較before ${nBefore} 少一次`)
+        })
+
+        it('funGenerationBefore收到本代超參數物件', async function() {
+            let got = null
+            await call('params', {
+                Nl: 2,
+                funGenerationBefore: (o) => {
+                    if (got === null) {
+                        got = o
+                    }
+                },
+            })
+            assert.ok(got !== null, `funGenerationBefore未被呼叫`)
+            assert.deepStrictEqual(Object.keys(got.params).sort(), [
+                'LocalSearchMethod',
+                'ModeOutLimit',
+                'psoBeta',
+                'psoC1',
+                'psoC2',
+                'psoGamma',
+                'psoInertiaMin',
+            ])
+        })
+
+        it('funGetBetter被呼叫時收到最佳解與迴圈數', async function() {
+            //呼叫次數取決於迴圈中是否出現更優解, 故僅驗證引數形式
+            //  omlPSO之迴圈數自0起算(let i = -1後於迴圈首行i++), 故首代之i為0
+            let calls = []
+            await call('getbetter', {
+                Nl: 5,
+                funGetBetter: (bestSolution, i) => {
+                    calls.push({ bestSolution, i })
+                },
+            })
+            calls.forEach((v, k) => {
+                assert.ok(Number.isFinite(v.bestSolution.fitness), `第${k}次之fitness非有限數`)
+                assert.strictEqual(v.bestSolution.ps.length, 2 + keys.length, `第${k}次之設計變數個數非預期`)
+                assert.ok(Number.isInteger(v.i) && v.i >= 0, `第${k}次之迴圈數非預期: ${v.i}`)
+            })
+        })
+
+        it('PSO設定與estimKeys自身設定可同時給予且互不干擾', async function() {
+            let fdData = path.resolve(fdTmp, 'pso', 's-mix')
+            let m = await estimKeys(ott, st, d.fdOhlc, d.fdParam, d.timeStart, d.timeEnd, 'long', keys, fdData, {
+                ...optBase,
+                ...optPso,
+                NContiguous: 5,
+            })
+
+            //PSO設定生效
+            assert.match(m.stopMode, /NContiguous\[5\]$/, `實得: ${m.stopMode}`)
+
+            //estimKeys自身之thsSl與thsTp仍決定止損止盈之取值
+            assert.strictEqual(m.bestSolution.ps[0].value, 0.02)
+            assert.strictEqual(m.bestSolution.ps[1].value, 0.03)
+
+            //estimKeys自身之三門檻仍決定策略是否存檔
+            let ss = readStrategies(fdData, { readContent: true })
+            assert.ok(ss.length > 0, '門檻放寬時須有策略檔寫出')
+            ss.forEach((s) => {
+                assert.strictEqual(s.data.settings.rStopLoss, 0.02)
+                assert.strictEqual(s.data.settings.rTakeProfit, 0.03)
+            })
         })
 
     })
