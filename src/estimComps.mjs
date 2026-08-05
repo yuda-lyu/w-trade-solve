@@ -18,7 +18,9 @@ import estimPicks from './estimPicks.mjs'
  * Unit Test: {@link https://github.com/yuda-lyu/w-trade-solve/blob/master/test/unit-estimComps.test.mjs Github}
  * @function
  * @param {Function} ott 輸入時區時間函數，傳入時間字串回傳dayjs時間物件，可用src/ott.mjs
- * @param {Object} st 輸入設定物件，需可由opt.keySettings取得name、symbol與interval欄位
+ * @param {String} name 輸入幣種名稱字串，例如'btc'
+ * @param {String} symbol 輸入交易對名稱字串，例如'BTCUSDT'
+ * @param {String} interval 輸入K線週期字串，例如'4hr'
  * @param {String} fdOhlc 輸入儲存K線(ohlc)序列資料夾字串
  * @param {String} fdParam 輸入儲存指標參數序列資料夾字串
  * @param {String} timeStart 輸入回測起始時間字串，格式'YYYY-MM-DDTHH:mm:ss'
@@ -32,18 +34,21 @@ import estimPicks from './estimPicks.mjs'
  *
  * import ott from './src/ott.mjs'
  *
- * let st = {
- *     btc4hr: { name: 'btc', symbol: 'BTCUSDT', interval: '4hr' },
- * }
- *
  * //comps='2,1,0', 挑2種一般類、1種指數類與0種成交量類
- * await estimComps(ott, st, './data/ohlc', './data/param', '2022-07-01T00:00:00', '2025-04-08T00:00:00', 'long', '2,1,0', './data/strategy', {
- *     keySettings: 'btc4hr',
- * })
+ * await estimComps(ott, 'btc', 'BTCUSDT', '4hr', './data/ohlc', './data/param', '2022-07-01T00:00:00', '2025-04-08T00:00:00', 'long', '2,1,0', './data/strategy', {})
  *
  */
-let estimComps = async (ott, st, fdOhlc, fdParam, timeStart, timeEnd, mode, comps, fdData, opt = {}) => {
+let estimComps = async (ott, name, symbol, interval, fdOhlc, fdParam, timeStart, timeEnd, mode, comps, fdData, opt = {}) => {
 
+    if (!isestr(name)) {
+        throw new Error(`invalid name[${name}]`)
+    }
+    if (!isestr(symbol)) {
+        throw new Error(`invalid symbol[${symbol}]`)
+    }
+    if (!isestr(interval)) {
+        throw new Error(`invalid interval[${interval}]`)
+    }
     if (!isestr(fdOhlc)) {
         throw new Error(`invalid fdOhlc[${fdOhlc}]`)
     }
@@ -110,7 +115,7 @@ let estimComps = async (ott, st, fdOhlc, fdParam, timeStart, timeEnd, mode, comp
     }
 
     //estimPicks
-    await estimPicks(ott, st, fdOhlc, fdParam, timeStart, timeEnd, mode, funPickKeys, fdData, opt)
+    await estimPicks(ott, name, symbol, interval, fdOhlc, fdParam, timeStart, timeEnd, mode, funPickKeys, fdData, opt)
 
 }
 

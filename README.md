@@ -38,15 +38,11 @@ async function test() {
     fs.mkdirSync(fdOhlc, { recursive: true })
     fs.mkdirSync(fdParam, { recursive: true })
 
-    //st, 設定物件, 由 opt.keySettings 指定取用之鍵
+    //name, symbol, interval, 幣種設定
     //  name 與 interval 用於組出 K 線序列 key(`${name}_price_${interval}`)與縮寫 tid
-    let st = {
-        btc4hr: {
-            name: 'btc',
-            symbol: 'BTCUSDT',
-            interval: '4hr',
-        },
-    }
+    let name = 'btc'
+    let symbol = 'BTCUSDT'
+    let interval = '4hr'
 
     //arrOhlc 與 arrParam, 20 根 4hr K 線與對應之指標序列(以 sin/cos 合成之示範資料)
     let arrOhlc = []
@@ -65,16 +61,23 @@ async function test() {
     //keys, 待率定門檻之指標 key, 各 key 於 fdParam 內須有對應之 `${key}.json`
     let keys = ['btc_4hr_ma_1day']
 
-    //estimKeys, 以 omlPSO 率定[止損, 止盈, 各 key 門檻], 逐次以 runStrategy 回測並取 fitness 最小者
+    //estimKeys, 以最佳化演算法率定[止損, 止盈, 各 key 門檻], 逐次以 runStrategy 回測並取 fitness 最小者
     //  滿足 thNumTrade / thRWin / thREquivalentCumuProfitOrLossFinalNormYear 三門檻之參數組會存入 fdData
-    let m = await wts.estimKeys(ott, st, fdOhlc, fdParam, arrOhlc[0].time, arrOhlc[19].time, 'long', keys, fdData, {
-        keySettings: 'btc4hr',
+    //  opt 除下列各欄位外皆傳遞至演算法, 故可一併給 Np / NContiguous 等求解設定
+    let m = await wts.estimKeys(ott, name, symbol, interval, fdOhlc, fdParam, arrOhlc[0].time, arrOhlc[19].time, 'long', keys, fdData, {
         thsTp: [3], //止盈候選(%), 僅給 1 點使示範較快收斂
         thsSl: [2], //止損候選(%)
         thNumTrade: 5, //至少 5 筆交易才存檔
         thRWin: 0.5, //勝率至少 50% 才存檔
         thREquivalentCumuProfitOrLossFinalNormYear: 0, //等效年化盈虧至少 0 才存檔
+        methodOml: 'PSO', //可選 'RGA' / 'DE' / 'HS' / 'PSO' / 'ACO', 預設 'PSO'
+        Np: 8, //PSO 之粒子數, 預設 40
+        NContiguous: 5, //最佳解連續未更新次數上限, 預設 100
     })
+
+    //停止機制, 由所選演算法之設定決定, 此處為 NContiguous 達 5 而停止
+    console.log(m.stopMode)
+    // => 'stop by iContinue[5] >= NContiguous[5]'
 
     //設計變數為[止損, 止盈, 各 key 門檻], 故個數為 2 + keys 個數
     //  各 key 門檻之解值帶有平移量 10, 大於 0 代表'>'條件、小於 0 代表'<'條件, 還原時扣除平移量
@@ -128,5 +131,6 @@ test()
     .catch((err) => {
         console.log('catch', err)
     })
+
 
 ```

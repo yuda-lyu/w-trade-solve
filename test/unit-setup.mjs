@@ -11,21 +11,14 @@ import path from 'path'
 let buildFdTmp = (name) => path.resolve(`./test/tmp-unit-${name}`)
 
 
-//st: estim系列所需之設定物件, 以keySettings為鍵取用
-let keySettings = 'btc4hr'
-let buildSt = () => {
-    return {
-        [keySettings]: {
-            name: 'btc',
-            symbol: 'BTCUSDT',
-            interval: '4hr',
-        },
-    }
-}
+//name, symbol, interval: estim系列前置之幣種設定
+let name = 'btc'
+let symbol = 'BTCUSDT'
+let interval = '4hr'
 
 
 //keyOhlc: 依estimKeys內`${name}_price_${interval}`規則組出之K線序列key
-let keyOhlc = 'btc_price_4hr'
+let keyOhlc = `${name}_price_${interval}`
 
 
 //tBase, tStep: 基準起始時間2020-01-01T00:00:00, 每根K線間隔4小時
@@ -109,8 +102,9 @@ let buildFdData = (fdTmp, fd, keysParam, opt = {}) => {
 
 export {
     buildFdTmp,
-    keySettings,
-    buildSt,
+    name,
+    symbol,
+    interval,
     keyOhlc,
     genTimes,
     genArrOhlc,

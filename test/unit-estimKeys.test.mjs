@@ -6,14 +6,14 @@ import readStrategies from '../src/readStrategies.mjs'
 import genTid from '../src/genTid.mjs'
 import cont from '../src/cont.mjs'
 import ott from '../src/ott.mjs'
-import { buildFdTmp, buildFdData, buildSt, keySettings } from './unit-setup.mjs'
+import { buildFdTmp, buildFdData, name, symbol, interval } from './unit-setup.mjs'
 
 
 //規格來源: src/estimKeys.mjs
-//  estimKeys(ott, st, fdOhlc, fdParam, timeStart, timeEnd, mode, keys, fdData, opt):
+//  estimKeys(ott, name, symbol, interval, fdOhlc, fdParam, timeStart, timeEnd, mode, keys, fdData, opt):
 //    設計變數為[止損, 止盈, ...各key門檻], 止損止盈由opt.thsSl與opt.thsTp之百分比清單除以100離散取值
 //    各key門檻由rang(-2,2,40)之41點各自平移+10與-10為82點, 解值>0代表'>'條件、<0代表'<'條件, 還原時扣除平移值
-//    以omlPSO求解, 各次以runStrategy回測並經calcFitness計算適應值
+//    以opt.methodOml指定之演算法求解(預設PSO), 各次以runStrategy回測並經calcFitness計算適應值
 //    滿足thNumTrade、thRWin與thREquivalentCumuProfitOrLossFinalNormYear三門檻者, 以genStrategyFileName存入fdData
 //    同tkid(tid+級距)已有策略時, 僅於等效年化盈虧更佳時抽換並刪除較差者, 故同tkid恆僅一檔
 //    fdData不存在時自動建立
@@ -22,12 +22,8 @@ import { buildFdTmp, buildFdData, buildSt, keySettings } from './unit-setup.mjs'
 let fdTmp = buildFdTmp('estimKeys')
 
 
-let st = buildSt()
-
-
 //optBase: 三門檻皆放寬, 使求解過程之可用參數組必然寫出策略檔
 let optBase = {
-    keySettings,
     thsTp: [3],
     thsSl: [2],
     thNumTrade: 1,
@@ -51,7 +47,7 @@ describe('estimKeys', function() {
         before(async function() {
             this.timeout(120000)
             d = buildFdData(fdTmp, 'solve', keys, { n: 20 })
-            m = await estimKeys(ott, st, d.fdOhlc, d.fdParam, d.timeStart, d.timeEnd, 'long', keys, d.fdData, optBase)
+            m = await estimKeys(ott, name, symbol, interval, d.fdOhlc, d.fdParam, d.timeStart, d.timeEnd, 'long', keys, d.fdData, optBase)
         })
 
         it('回傳omlPSO之求解結果, 含bestSolution與停止資訊', function() {
@@ -167,7 +163,7 @@ describe('estimKeys', function() {
             let keys = ['btc_4hr_ma_1day']
             let d = buildFdData(fdTmp, 'nosave', keys, { n: 20 })
 
-            await estimKeys(ott, st, d.fdOhlc, d.fdParam, d.timeStart, d.timeEnd, 'long', keys, d.fdData, {
+            await estimKeys(ott, name, symbol, interval, d.fdOhlc, d.fdParam, d.timeStart, d.timeEnd, 'long', keys, d.fdData, {
                 ...optBase,
                 thNumTrade: 1e9, //資料僅20根K線, 無從達成
             })
@@ -200,7 +196,7 @@ describe('estimKeys', function() {
         //call: 以獨立之策略資料夾執行求解
         let call = (tag, extra = {}) => {
             let fdData = path.resolve(fdTmp, 'pso', `s-${tag}`)
-            return estimKeys(ott, st, d.fdOhlc, d.fdParam, d.timeStart, d.timeEnd, 'long', keys, fdData, {
+            return estimKeys(ott, name, symbol, interval, d.fdOhlc, d.fdParam, d.timeStart, d.timeEnd, 'long', keys, fdData, {
                 ...optBase,
                 ...optPso,
                 ...extra,
@@ -295,7 +291,7 @@ describe('estimKeys', function() {
 
         it('PSO設定與estimKeys自身設定可同時給予且互不干擾', async function() {
             let fdData = path.resolve(fdTmp, 'pso', 's-mix')
-            let m = await estimKeys(ott, st, d.fdOhlc, d.fdParam, d.timeStart, d.timeEnd, 'long', keys, fdData, {
+            let m = await estimKeys(ott, name, symbol, interval, d.fdOhlc, d.fdParam, d.timeStart, d.timeEnd, 'long', keys, fdData, {
                 ...optBase,
                 ...optPso,
                 NContiguous: 5,
@@ -319,6 +315,97 @@ describe('estimKeys', function() {
 
     })
 
+    describe('methodOml演算法選擇', function() {
+
+        //各演算法之超參數集合不同, 以funGenerationBefore所收到之params鍵集合判別實際採用者
+        //  迴圈數之欄位名亦不同: RGA與DE為Ng、HS為Ni、PSO與ACO為Nl, 故一次給齊各欄位後,
+        //  由stopMode所標明之欄位名即可看出實際採用之演算法
+
+        let keys = ['btc_4hr_ma_1day']
+        let d = null
+
+        before(function() {
+            d = buildFdData(fdTmp, 'method', keys, { n: 20 })
+        })
+
+        //kpParams: 各演算法於funGenerationBefore所提供之超參數鍵(已排序)
+        let kpParams = {
+            RGA: ['LocalSearchMethod', 'ModeOutLimit', 'rgaCrossover', 'rgaElitism', 'rgaMutation', 'rgaMutationRate', 'rgaSelection'],
+            DE: ['LocalSearchMethod', 'ModeOutLimit', 'deCrossoverFactor', 'deF', 'deLanda', 'deMutation'],
+            HS: ['LocalSearchMethod', 'ModeOutLimit', 'hsHMC', 'hsHMCR', 'hsPA', 'hsPAR'],
+            PSO: ['LocalSearchMethod', 'ModeOutLimit', 'psoBeta', 'psoC1', 'psoC2', 'psoGamma', 'psoInertiaMin'],
+            ACO: ['LocalSearchMethod', 'ModeOutLimit', 'acoAlpha', 'acoExploitationRate', 'acoRo'],
+        }
+
+        //kpKeyIteration: 各演算法之迴圈數欄位名
+        let kpKeyIteration = {
+            RGA: 'Ng',
+            DE: 'Ng',
+            HS: 'Ni',
+            PSO: 'Nl',
+            ACO: 'Nl',
+        }
+
+        //optStop: 一次給齊各演算法之迴圈數與族群數欄位, 各演算法僅取用自身認得者
+        let optStop = {
+            Ng: 2,
+            Ni: 2,
+            Nl: 2,
+            Np: 6,
+            Ns: 6,
+            Na: 6,
+            UseRepeat: false,
+            UseImmigration: false,
+        }
+
+        //run: 執行求解並回傳{m, params}
+        let run = async (tag, extra = {}) => {
+            let fdData = path.resolve(fdTmp, 'method', `s-${tag}`)
+            let params = null
+            let m = await estimKeys(ott, name, symbol, interval, d.fdOhlc, d.fdParam, d.timeStart, d.timeEnd, 'long', keys, fdData, {
+                ...optBase,
+                ...optStop,
+                ...extra,
+                funGenerationBefore: (o) => {
+                    if (params === null) {
+                        params = o.params
+                    }
+                },
+            })
+            return { m, params }
+        }
+
+        Object.keys(kpParams).forEach((methodOml) => {
+            it(`methodOml為${methodOml}時採用該演算法`, async function() {
+                let { m, params } = await run(methodOml, { methodOml })
+                assert.deepStrictEqual(Object.keys(params).sort(), kpParams[methodOml], `${methodOml}之超參數集合非預期`)
+                assert.match(m.stopMode, new RegExp(`^stop by ${kpKeyIteration[methodOml]}\\[2\\]$`), `${methodOml}實得: ${m.stopMode}`)
+                assert.strictEqual(m.stopIteration, 2)
+            })
+        })
+
+        it('未給methodOml時採PSO', async function() {
+            let { m, params } = await run('default')
+            assert.deepStrictEqual(Object.keys(params).sort(), kpParams.PSO)
+            assert.match(m.stopMode, /^stop by Nl\[2\]$/, `實得: ${m.stopMode}`)
+        })
+
+        it('methodOml非五者之一時亦採PSO', async function() {
+            let { m, params } = await run('unknown', { methodOml: 'XXX' })
+            assert.deepStrictEqual(Object.keys(params).sort(), kpParams.PSO)
+            assert.match(m.stopMode, /^stop by Nl\[2\]$/, `實得: ${m.stopMode}`)
+        })
+
+        it('各演算法之求解結果皆含bestSolution與停止資訊', async function() {
+            let { m } = await run('shape', { methodOml: 'DE' })
+            assert.ok(Number.isFinite(m.bestSolution.fitness))
+            assert.strictEqual(m.bestSolution.ps.length, 2 + keys.length)
+            assert.ok(typeof m.stopMode === 'string' && m.stopMode.length > 0)
+            assert.ok(m.stopExecutions > 0)
+        })
+
+    })
+
     describe('輸入檢核', function() {
 
         let keys = ['btc_4hr_ma_1day']
@@ -331,6 +418,9 @@ describe('estimKeys', function() {
         //call: 以合法引數為底, 依opt覆寫指定引數後呼叫
         let call = (ov = {}) => {
             let a = {
+                name,
+                symbol,
+                interval,
                 fdOhlc: d.fdOhlc,
                 fdParam: d.fdParam,
                 timeStart: d.timeStart,
@@ -341,8 +431,21 @@ describe('estimKeys', function() {
                 opt: optBase,
                 ...ov,
             }
-            return estimKeys(ott, st, a.fdOhlc, a.fdParam, a.timeStart, a.timeEnd, a.mode, a.keys, a.fdData, a.opt)
+            return estimKeys(ott, a.name, a.symbol, a.interval, a.fdOhlc, a.fdParam, a.timeStart, a.timeEnd, a.mode, a.keys, a.fdData, a.opt)
         }
+
+        it('name非有效字串時reject', async function() {
+            await assert.rejects(call({ name: '' }), /invalid name/)
+            await assert.rejects(call({ name: null }), /invalid name/)
+        })
+
+        it('symbol非有效字串時reject', async function() {
+            await assert.rejects(call({ symbol: '' }), /invalid symbol/)
+        })
+
+        it('interval非有效字串時reject', async function() {
+            await assert.rejects(call({ interval: '' }), /invalid interval/)
+        })
 
         it('fdOhlc非有效字串時reject', async function() {
             await assert.rejects(call({ fdOhlc: '' }), /invalid fdOhlc/)
@@ -373,11 +476,6 @@ describe('estimKeys', function() {
 
         it('fdData非有效字串時reject', async function() {
             await assert.rejects(call({ fdData: '' }), /invalid fdData/)
-        })
-
-        it('opt.keySettings非有效字串時reject', async function() {
-            await assert.rejects(call({ opt: {} }), /invalid opt.keySettings/)
-            await assert.rejects(call({ opt: { keySettings: 123 } }), /invalid opt.keySettings/)
         })
 
         it('回測時間範圍超出資料範圍時reject', async function() {

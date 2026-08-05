@@ -2,11 +2,11 @@ import assert from 'assert'
 import fs from 'fs'
 import estimPicks from '../src/estimPicks.mjs'
 import ott from '../src/ott.mjs'
-import { buildFdTmp, buildFdData, buildSt, keySettings } from './unit-setup.mjs'
+import { buildFdTmp, buildFdData, name, symbol, interval } from './unit-setup.mjs'
 
 
 //規格來源: src/estimPicks.mjs
-//  estimPicks(ott, st, fdOhlc, fdParam, timeStart, timeEnd, mode, funPickKeys, fdData, opt):
+//  estimPicks(ott, name, symbol, interval, fdOhlc, fdParam, timeStart, timeEnd, mode, funPickKeys, fdData, opt):
 //    由fdParam列舉全部指標key後分3類: 開頭為'index_'者為keysIndex, 含'_vbs_'者為keysVolumn, 其餘為keysNorm
 //    分類後各類依序經opt.funFilterKeysNorm、opt.funFilterKeysIndex、opt.funFilterKeysVolumn過濾(皆await)
 //    再呼叫funPickKeys({keysNorm,keysIndex,keysVolumn})取得keys, 最後交由estimKeys求解
@@ -14,9 +14,6 @@ import { buildFdTmp, buildFdData, buildSt, keySettings } from './unit-setup.mjs'
 
 
 let fdTmp = buildFdTmp('estimPicks')
-
-
-let st = buildSt()
 
 
 //keysParam: 涵蓋3類, index_開頭為指數類, 含_vbs_為成交量類, 其餘為一般類
@@ -33,6 +30,9 @@ let d = null
 //call: 以合法引數為底, 依ov覆寫指定引數後呼叫
 let call = (ov = {}) => {
     let a = {
+        name,
+        symbol,
+        interval,
         fdOhlc: d.fdOhlc,
         fdParam: d.fdParam,
         timeStart: d.timeStart,
@@ -42,10 +42,10 @@ let call = (ov = {}) => {
             return []
         },
         fdData: d.fdData,
-        opt: { keySettings },
+        opt: {},
         ...ov,
     }
-    return estimPicks(ott, st, a.fdOhlc, a.fdParam, a.timeStart, a.timeEnd, a.mode, a.funPickKeys, a.fdData, a.opt)
+    return estimPicks(ott, a.name, a.symbol, a.interval, a.fdOhlc, a.fdParam, a.timeStart, a.timeEnd, a.mode, a.funPickKeys, a.fdData, a.opt)
 }
 
 
@@ -92,10 +92,10 @@ describe('estimPicks', function() {
         it('僅開頭為index_者歸為指數類, 名稱中段含index_者仍為一般類', async function() {
             let dd = buildFdData(fdTmp, 'cls-index', ['btc_index_rsi', 'index_rsi'], { n: 10 })
             let got = null
-            await assert.rejects(estimPicks(ott, st, dd.fdOhlc, dd.fdParam, dd.timeStart, dd.timeEnd, 'long', (o) => {
+            await assert.rejects(estimPicks(ott, name, symbol, interval, dd.fdOhlc, dd.fdParam, dd.timeStart, dd.timeEnd, 'long', (o) => {
                 got = o
                 return []
-            }, dd.fdData, { keySettings }), /invalid keys/)
+            }, dd.fdData, {}), /invalid keys/)
 
             assert.deepStrictEqual(got.keysIndex, ['index_rsi'])
             assert.deepStrictEqual(got.keysNorm, ['btc_index_rsi'])
@@ -105,10 +105,10 @@ describe('estimPicks', function() {
             //判斷順序為index_開頭 → 含_vbs_ → 其餘
             let dd = buildFdData(fdTmp, 'cls-vbs', ['index_a_vbs_b', 'btc_vbs_c'], { n: 10 })
             let got = null
-            await assert.rejects(estimPicks(ott, st, dd.fdOhlc, dd.fdParam, dd.timeStart, dd.timeEnd, 'long', (o) => {
+            await assert.rejects(estimPicks(ott, name, symbol, interval, dd.fdOhlc, dd.fdParam, dd.timeStart, dd.timeEnd, 'long', (o) => {
                 got = o
                 return []
-            }, dd.fdData, { keySettings }), /invalid keys/)
+            }, dd.fdData, {}), /invalid keys/)
 
             assert.deepStrictEqual(got.keysIndex, ['index_a_vbs_b'])
             assert.deepStrictEqual(got.keysVolumn, ['btc_vbs_c'])
@@ -123,7 +123,6 @@ describe('estimPicks', function() {
             let got = null
             await assert.rejects(call({
                 opt: {
-                    keySettings,
                     funFilterKeysNorm: (ks) => {
                         return ks.filter((v) => {
                             return v === keyNormA
@@ -143,7 +142,6 @@ describe('estimPicks', function() {
             let got = null
             await assert.rejects(call({
                 opt: {
-                    keySettings,
                     funFilterKeysIndex: () => {
                         return []
                     },
@@ -166,7 +164,6 @@ describe('estimPicks', function() {
             let got = null
             await assert.rejects(call({
                 opt: {
-                    keySettings,
                     funFilterKeysNorm: async (ks) => {
                         return ks.slice(0, 1)
                     },
@@ -194,18 +191,31 @@ describe('estimPicks', function() {
         })
 
         it('funPickKeys回傳非空陣列時通過keys檢核, 續往後續檢核', async function() {
-            //opt未給keySettings, 故停在estimKeys之opt.keySettings檢核, 代表keys已通過
+            //以超出資料範圍之timeEnd呼叫, 停在w-data-tdprovide之時間範圍檢核, 代表keys已通過
             await assert.rejects(call({
                 funPickKeys: () => {
                     return [keyNormA]
                 },
-                opt: {},
-            }), /invalid opt.keySettings/)
+                timeEnd: '2099-01-01T00:00:00',
+            }), /timeEndData/)
         })
 
     })
 
     describe('輸入檢核', function() {
+
+        it('name非有效字串時reject', async function() {
+            await assert.rejects(call({ name: '' }), /invalid name/)
+            await assert.rejects(call({ name: null }), /invalid name/)
+        })
+
+        it('symbol非有效字串時reject', async function() {
+            await assert.rejects(call({ symbol: '' }), /invalid symbol/)
+        })
+
+        it('interval非有效字串時reject', async function() {
+            await assert.rejects(call({ interval: '' }), /invalid interval/)
+        })
 
         it('fdOhlc非有效字串時reject', async function() {
             await assert.rejects(call({ fdOhlc: '' }), /invalid fdOhlc/)

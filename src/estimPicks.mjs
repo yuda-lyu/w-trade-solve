@@ -11,12 +11,14 @@ import estimKeys from './estimKeys.mjs'
  *
  * 先由fdParam列舉全部指標key，並依名稱分為3類: 開頭為'index_'者為keysIndex(指數類)、含'_vbs_'者為keysVolumn(成交量類)、其餘為keysNorm(一般類)
  * 分類後各類可經opt內對應之過濾函數再行篩選，接著呼叫funPickKeys由3類挑出待率定之keys，最後交由estimKeys求解
- * fdOhlc、fdParam、timeStart、timeEnd、fdData無效或mode非'long'或'short'或funPickKeys非函數時throw
+ * name、symbol、interval、fdOhlc、fdParam、timeStart、timeEnd、fdData無效或mode非'long'或'short'或funPickKeys非函數時throw
  *
  * Unit Test: {@link https://github.com/yuda-lyu/w-trade-solve/blob/master/test/unit-estimPicks.test.mjs Github}
  * @function
  * @param {Function} ott 輸入時區時間函數，傳入時間字串回傳dayjs時間物件，可用src/ott.mjs
- * @param {Object} st 輸入設定物件，需可由opt.keySettings取得name、symbol與interval欄位
+ * @param {String} name 輸入幣種名稱字串，例如'btc'
+ * @param {String} symbol 輸入交易對名稱字串，例如'BTCUSDT'
+ * @param {String} interval 輸入K線週期字串，例如'4hr'
  * @param {String} fdOhlc 輸入儲存K線(ohlc)序列資料夾字串
  * @param {String} fdParam 輸入儲存指標參數序列資料夾字串
  * @param {String} timeStart 輸入回測起始時間字串，格式'YYYY-MM-DDTHH:mm:ss'
@@ -33,22 +35,25 @@ import estimKeys from './estimKeys.mjs'
  *
  * import ott from './src/ott.mjs'
  *
- * let st = {
- *     btc4hr: { name: 'btc', symbol: 'BTCUSDT', interval: '4hr' },
- * }
- *
  * //funPickKeys, 由一般類挑第1個key為待率定key
  * let funPickKeys = ({ keysNorm, keysIndex, keysVolumn }) => {
  *     return [keysNorm[0]]
  * }
  *
- * await estimPicks(ott, st, './data/ohlc', './data/param', '2022-07-01T00:00:00', '2025-04-08T00:00:00', 'long', funPickKeys, './data/strategy', {
- *     keySettings: 'btc4hr',
- * })
+ * await estimPicks(ott, 'btc', 'BTCUSDT', '4hr', './data/ohlc', './data/param', '2022-07-01T00:00:00', '2025-04-08T00:00:00', 'long', funPickKeys, './data/strategy', {})
  *
  */
-let estimPicks = async (ott, st, fdOhlc, fdParam, timeStart, timeEnd, mode, funPickKeys, fdData, opt = {}) => {
+let estimPicks = async (ott, name, symbol, interval, fdOhlc, fdParam, timeStart, timeEnd, mode, funPickKeys, fdData, opt = {}) => {
 
+    if (!isestr(name)) {
+        throw new Error(`invalid name[${name}]`)
+    }
+    if (!isestr(symbol)) {
+        throw new Error(`invalid symbol[${symbol}]`)
+    }
+    if (!isestr(interval)) {
+        throw new Error(`invalid interval[${interval}]`)
+    }
     if (!isestr(fdOhlc)) {
         throw new Error(`invalid fdOhlc[${fdOhlc}]`)
     }
@@ -120,7 +125,7 @@ let estimPicks = async (ott, st, fdOhlc, fdParam, timeStart, timeEnd, mode, funP
     // console.log('keys', keys)
 
     //estimKeys
-    await estimKeys(ott, st, fdOhlc, fdParam, timeStart, timeEnd, mode, keys, fdData, opt)
+    await estimKeys(ott, name, symbol, interval, fdOhlc, fdParam, timeStart, timeEnd, mode, keys, fdData, opt)
 
 }
 

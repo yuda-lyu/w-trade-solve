@@ -4,22 +4,19 @@ import estimComps from '../src/estimComps.mjs'
 import readStrategies from '../src/readStrategies.mjs'
 import genTid from '../src/genTid.mjs'
 import ott from '../src/ott.mjs'
-import { buildFdTmp, buildFdData, buildSt, keySettings } from './unit-setup.mjs'
+import { buildFdTmp, buildFdData, name, symbol, interval } from './unit-setup.mjs'
 
 
 //規格來源: src/estimComps.mjs
-//  estimComps(ott, st, fdOhlc, fdParam, timeStart, timeEnd, mode, comps, fdData, opt):
+//  estimComps(ott, name, symbol, interval, fdOhlc, fdParam, timeStart, timeEnd, mode, comps, fdData, opt):
 //    comps以wsemi sep依','切割(自動trim並剔除空段), 須恰為3段否則throw
 //    3段依序為由keysNorm、keysIndex與keysVolumn各隨機挑選之key個數, 為0者不挑
 //    各類以wsemi randomIntsNdpRange不重複取樣後, 交由estimPicks與estimKeys
-//  觀察方式: 未給opt.keySettings時, keys非空則停在estimKeys之opt.keySettings檢核,
-//    keys為空則停在keys檢核, 兩者錯誤訊息不同, 故可驗證各類挑選是否生效
+//  觀察方式: 以超出資料範圍之timeEnd呼叫, keys非空則通過keys檢核後停在w-data-tdprovide之時間範圍檢核,
+//    keys為空則停在estimKeys之keys檢核, 兩者錯誤訊息不同, 故可驗證各類挑選是否生效
 
 
 let fdTmp = buildFdTmp('estimComps')
-
-
-let st = buildSt()
 
 
 let keyNormA = 'btc_4hr_ma_1day'
@@ -32,6 +29,10 @@ let keysParam = [keyNormA, keyNormB, keyIndex, keyVolumn]
 let d = null
 
 
+//timeEndOut: 超出測試資料範圍之結束時間
+let timeEndOut = '2099-01-01T00:00:00'
+
+
 //empty: 過濾函數, 將該類清空
 let empty = () => {
     return []
@@ -41,17 +42,20 @@ let empty = () => {
 //call: 以合法引數為底, 依ov覆寫指定引數後呼叫
 let call = (ov = {}) => {
     let a = {
+        name,
+        symbol,
+        interval,
         fdOhlc: d.fdOhlc,
         fdParam: d.fdParam,
         timeStart: d.timeStart,
-        timeEnd: d.timeEnd,
+        timeEnd: timeEndOut, //超出資料範圍, 使keys非空時停在w-data-tdprovide之時間範圍檢核
         mode: 'long',
         comps: '1,0,0',
         fdData: d.fdData,
-        opt: {}, //未給keySettings, 使流程停在estimKeys之opt.keySettings檢核
+        opt: {},
         ...ov,
     }
-    return estimComps(ott, st, a.fdOhlc, a.fdParam, a.timeStart, a.timeEnd, a.mode, a.comps, a.fdData, a.opt)
+    return estimComps(ott, a.name, a.symbol, a.interval, a.fdOhlc, a.fdParam, a.timeStart, a.timeEnd, a.mode, a.comps, a.fdData, a.opt)
 }
 
 
@@ -79,8 +83,8 @@ describe('estimComps', function() {
         })
 
         it('各段前後空白被trim, 不影響解析', async function() {
-            //' 1 , 0 , 0 '等同'1,0,0', 應挑到1個key而停在keySettings檢核
-            await assert.rejects(call({ comps: ' 1 , 0 , 0 ' }), /invalid opt.keySettings/)
+            //' 1 , 0 , 0 '等同'1,0,0', 應挑到1個key而通過keys檢核
+            await assert.rejects(call({ comps: ' 1 , 0 , 0 ' }), /timeEndData/)
         })
 
         it('comps非有效字串時throw', async function() {
@@ -100,21 +104,21 @@ describe('estimComps', function() {
             await assert.rejects(call({
                 comps: '1,0,0',
                 opt: { funFilterKeysIndex: empty, funFilterKeysVolumn: empty },
-            }), /invalid opt.keySettings/)
+            }), /timeEndData/)
         })
 
         it('第2段對應指數類: 僅指數類有key時仍可挑出', async function() {
             await assert.rejects(call({
                 comps: '0,1,0',
                 opt: { funFilterKeysNorm: empty, funFilterKeysVolumn: empty },
-            }), /invalid opt.keySettings/)
+            }), /timeEndData/)
         })
 
         it('第3段對應成交量類: 僅成交量類有key時仍可挑出', async function() {
             await assert.rejects(call({
                 comps: '0,0,1',
                 opt: { funFilterKeysNorm: empty, funFilterKeysIndex: empty },
-            }), /invalid opt.keySettings/)
+            }), /timeEndData/)
         })
 
         it('向已清空之類別挑選時, 取樣範圍上界為-1而throw', async function() {
@@ -130,7 +134,7 @@ describe('estimComps', function() {
             await assert.rejects(call({
                 comps: '4,0,0',
                 opt: { funFilterKeysIndex: empty, funFilterKeysVolumn: empty },
-            }), /invalid opt.keySettings/)
+            }), /timeEndData/)
         })
 
     })
@@ -142,8 +146,7 @@ describe('estimComps', function() {
 
             let dd = buildFdData(fdTmp, 'e2e', [keyNormA, keyIndex, keyVolumn], { n: 20 })
 
-            await estimComps(ott, st, dd.fdOhlc, dd.fdParam, dd.timeStart, dd.timeEnd, 'long', '1,0,0', dd.fdData, {
-                keySettings,
+            await estimComps(ott, name, symbol, interval, dd.fdOhlc, dd.fdParam, dd.timeStart, dd.timeEnd, 'long', '1,0,0', dd.fdData, {
                 thsTp: [3],
                 thsSl: [2],
                 thNumTrade: 1,
@@ -163,6 +166,19 @@ describe('estimComps', function() {
     })
 
     describe('輸入檢核', function() {
+
+        it('name非有效字串時reject', async function() {
+            await assert.rejects(call({ name: '' }), /invalid name/)
+            await assert.rejects(call({ name: null }), /invalid name/)
+        })
+
+        it('symbol非有效字串時reject', async function() {
+            await assert.rejects(call({ symbol: '' }), /invalid symbol/)
+        })
+
+        it('interval非有效字串時reject', async function() {
+            await assert.rejects(call({ interval: '' }), /invalid interval/)
+        })
 
         it('fdOhlc非有效字串時reject', async function() {
             await assert.rejects(call({ fdOhlc: '' }), /invalid fdOhlc/)
