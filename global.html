@@ -136,7 +136,7 @@
     <dt class="tag-description">Description:</dt>
     <dd class="tag-description"><ul class="dummy"><li><p>共用常數</p>
 <p>dlmSeps為tid與sid內各段(mode與各key或各cond)之分隔字串
-dlmPkgs為策略檔名內各段(tid、levelNumTrade、rEquivalentCumuProfitOrLossFinalNormYear)之分隔字串</p></li></ul></dd>
+dlmPkgs為舊版策略檔名內各段(tid、levelNumTrade、rEquivalentCumuProfitOrLossFinalNormYear)之分隔字串，自genStrategyFileName改採雜湊檔名後僅供readStrategies解析舊格式檔名使用</p></li></ul></dd>
     
 
     
@@ -184,7 +184,7 @@ dlmPkgs為策略檔名內各段(tid、levelNumTrade、rEquivalentCumuProfitOrLos
 <div class="description usertext">
     <p>共用常數</p>
 <p>dlmSeps為tid與sid內各段(mode與各key或各cond)之分隔字串
-dlmPkgs為策略檔名內各段(tid、levelNumTrade、rEquivalentCumuProfitOrLossFinalNormYear)之分隔字串</p>
+dlmPkgs為舊版策略檔名內各段(tid、levelNumTrade、rEquivalentCumuProfitOrLossFinalNormYear)之分隔字串，自genStrategyFileName改採雜湊檔名後僅供readStrategies解析舊格式檔名使用</p>
 </div>
 
 
@@ -1842,7 +1842,8 @@ await estimFinder(ott, 'btc', 'BTCUSDT', '4hr', './data/ohlc', './data/param', '
 <p>設計變數為[止損比例, 止盈比例, ...各key之門檻]，止損與止盈由opt.thsSl與opt.thsTp給予之百分比清單離散取值
 各key門檻取值範圍為[-thLim,thLim]切為thLim<em>20段，並各自平移+vdir與-vdir(vdir=thLim</em>5)為兩組，使解值恆大於0代表'&gt;'條件、恆小於0代表'&lt;'條件，還原時再扣除平移值，故單一設計變數即同時涵蓋大於與小於兩種條件
 以w-optimization之最佳化函數求解，由opt.methodOml指定演算法，各次計算皆以w-trade-backtest之runStrategy回測並經calcFitness計算適應值
-各次計算結果若同時滿足交易次數、勝率與最終等效年化盈虧三門檻，則以genStrategyFileName產生檔名存入fdData；同tid且同交易次數級距(tkid)已有策略時，僅於最終等效年化盈虧更佳時抽換，並刪除較差者
+各次計算結果若同時滿足交易次數、勝率與最終等效年化盈虧三門檻，則以genStrategyFileName產生檔名存入fdData；檔名為tkid(tid+交易次數級距)之純函數，故直接組出檔名查詢既有策略(O(1)，不列舉全庫)，同tkid已有策略時僅於最終等效年化盈虧更佳時原地覆寫，故同tkid恆僅一檔；覆寫前驗證舊檔內tkid、name與interval與本次一致，不一致代表雜湊碰撞，直接throw以避免無聲覆寫
+策略檔內容除策略本體(tid、sid、name、symbol、interval、keyOhlc、mode、conds、settings)與summary、fitness外，另落地tkid、levelNumTrade、keys與solve區塊(timeStart、timeEnd、methodOml、thNumTrade、thRWin、thREquivalentCumuProfitOrLossFinalNormYear、thsTp、thsSl、timeSolved)，使識別與求解條件欄位自足，不依賴檔名
 opt除下列各欄位外，其餘欄位皆原樣傳遞至所選之最佳化函數，兩者欄位名稱無重疊，故可一併給予求解設定
 各演算法共通之設定為NContiguous(最佳解連續未更新次數上限，預設100)、NRepeat、NCore、ModeOutLimit、UseRepeat、UseImmigration、LocalSearchMethod與funGetBetter、funGenerationBefore、funGenerationAfter三接口；族群數與迴圈數之欄位名稱各演算法不同，RGA與DE為Np與Ng、PSO為Np與Nl、HS為Ns與Ni、ACO為Na與Nl；另各演算法有其專屬超參數，如PSO之psoC1Start、RGA之rgaCrossover、DE之deF、HS之hsHMCR與ACO之acoAlphaStart等
 預設之求解量甚大(單一key約需1萬7千次回測)，僅需快速試算時可調小族群數與NContiguous
@@ -1987,7 +1988,7 @@ console.log(mQuick.stopExecutions) //核心分析次數, 較預設設定大幅�
                 </td>
             
 
-            <td class="description last"><p>輸入時區時間函數，傳入時間字串回傳dayjs時間物件，可用src/ott.mjs</p></td>
+            <td class="description last"><p>輸入時區時間函數，傳入時間字串回傳dayjs時間物件，未傳入時回傳當下時間(供solve.timeSolved記錄)，可用src/ott.mjs</p></td>
         </tr>
 
     
@@ -3748,9 +3749,12 @@ console.log(sid)
     
     <dt class="tag-description">Description:</dt>
     <dd class="tag-description"><ul class="dummy"><li><p>產生策略儲存檔名</p>
-<p>檔名為<code>${tid}${cont.dlmPkgs}${levelNumTrade}${cont.dlmPkgs}${rEquivalentCumuProfitOrLossFinalNormYear}.json</code>
+<p>檔名為<code>${mode}_${levelNumTrade}_${hash}.json</code>，hash為md5(<code>${coin}:${interval}:${tid}:${levelNumTrade}</code>)取前16碼(64bits)
 tid由genTid以coin、interval、mode與keys產生，levelNumTrade由calcLevelNumTrade以summary.numTrade產生
-因tid與levelNumTrade皆入檔名，故可由檔名反解出同組keys與同交易次數級距之既有策略，供readStrategies列舉比較
+檔名為(coin,interval,tid,levelNumTrade)之純函數且與求解結果(等效年化盈虧)無關，故同tkid恆對應同一檔名，
+存檔端可直接組出檔名以fsIsFile查詢既有策略(O(1))，不需列舉全庫，且更新為原地覆寫，結構上不會出現同tkid多檔
+因genTid會剔除<code>${coin}_</code>與<code>${interval}_</code>樣式，不同幣種或週期之同組keys會得到相同tid，故hash輸入需含coin與interval以避免跨幣種/跨週期碰撞
+採定長雜湊係因NTFS單一檔名段上限為255字元(UTF-16計，LongPathsEnabled無法放寬)，keys個數多時舊式<code>${tid} ⊙ ...</code>檔名會超限
 settings目前未參與檔名組成</p>
 <p>Unit Test: <a href="https://github.com/yuda-lyu/w-trade-solve/blob/master/test/unit-genStrategyFileName.test.mjs">Github</a></p></li></ul></dd>
     
@@ -3758,7 +3762,7 @@ settings目前未參與檔名組成</p>
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="genStrategyFileName.mjs.html">genStrategyFileName.mjs</a>, <a href="genStrategyFileName.mjs.html#line37">line 37</a>
+        <a href="genStrategyFileName.mjs.html">genStrategyFileName.mjs</a>, <a href="genStrategyFileName.mjs.html#line41">line 41</a>
     </li></ul></dd>
     
 
@@ -3813,7 +3817,8 @@ let summary = { numTrade: 30, rEquivalentCumuProfitOrLossFinalNormYear: '31.25%'
 
 let fn = genStrategyFileName('btc', '4hr', 'long', keys, settings, summary)
 console.log(fn)
-// => 'long ║ p_ma_1day ⊙ 12 ⊙ 31.25%.json'</code></pre>
+// => 'long_12_9fce6961e8f56493.json'
+//tid為'long ║ p_ma_1day', 級距為12, hash為md5('btc:4hr:long ║ p_ma_1day:12')前16碼</code></pre>
 
 
 
@@ -3980,7 +3985,7 @@ console.log(fn)
 
             
 
-            <td class="description last"><p>輸入回測統計摘要物件，需含numTrade(交易次數)與rEquivalentCumuProfitOrLossFinalNormYear(最終等效年化盈虧百分比字串)欄位</p></td>
+            <td class="description last"><p>輸入回測統計摘要物件，需含numTrade(交易次數)欄位</p></td>
         </tr>
 
     
@@ -4880,8 +4885,11 @@ console.log(p2r(''))
     <dt class="tag-description">Description:</dt>
     <dd class="tag-description"><ul class="dummy"><li><p>讀取儲存策略資料夾內各策略檔資訊</p>
 <p>僅列舉fd第1層之檔案，資料夾不列入，fd非資料夾或無任何檔案時回傳空陣列
-各檔以主檔名(剔除'.json')依cont.dlmPkgs切段，依序為tid、levelNumTrade與rEquivalentCumuProfitOrLossFinalNormYear，即genStrategyFileName所產生之檔名，切不出tid者予以略過
-tid再依cont.dlmSeps切段，首段為mode，其餘為各key所組成之ps
+各檔依opt.fromContent決定解析來源:
+'filename'為舊式檔名反解: 以主檔名(剔除'.json')依cont.dlmPkgs切段，依序為tid、levelNumTrade與rEquivalentCumuProfitOrLossFinalNormYear，切不出tid者予以略過
+'content'為讀取檔內json之tid、tkid、levelNumTrade與summary等欄位(即estimKeys所寫出之策略內容)，非合法json或無tid欄位者予以略過，因需讀檔故較'filename'慢
+'auto'(預設)為逐檔判別: 檔名符合genStrategyFileName雜湊格式(<code>${mode}_${levelNumTrade}_${hash16}.json</code>)者走'content'，其餘走'filename'，故新舊格式混存時皆可列舉
+tid依cont.dlmSeps切段，首段為mode，其餘為各key所組成之ps
 tkid為<code>${tid}:${levelNumTrade}</code>，與estimKeys內用於判斷同組keys與同交易次數級距之組合方式一致</p>
 <p>Unit Test: <a href="https://github.com/yuda-lyu/w-trade-solve/blob/master/test/unit-readStrategies.test.mjs">Github</a></p></li></ul></dd>
     
@@ -4889,7 +4897,7 @@ tkid為<code>${tid}:${levelNumTrade}</code>，與estimKeys內用於判斷同組k
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="readStrategies.mjs.html">readStrategies.mjs</a>, <a href="readStrategies.mjs.html#line56">line 56</a>
+        <a href="readStrategies.mjs.html">readStrategies.mjs</a>, <a href="readStrategies.mjs.html#line67">line 67</a>
     </li></ul></dd>
     
 
@@ -4937,20 +4945,22 @@ tkid為<code>${tid}:${levelNumTrade}</code>，與estimKeys內用於判斷同組k
     <h5 class="h5-examples">Example</h5>
     
     <pre class="prettyprint"><code>import fs from 'fs'
-import cont from './src/cont.mjs'
+import genStrategyFileName from './src/genStrategyFileName.mjs'
 
 let fd = './tmp/data-strategy'
 fs.mkdirSync(fd, { recursive: true })
 
-//以genStrategyFileName之檔名規則儲存策略檔
-let fn = `long${cont.dlmSeps}ma_1day${cont.dlmPkgs}12${cont.dlmPkgs}31.25%.json`
-fs.writeFileSync(`${fd}/${fn}`, JSON.stringify({ mode: 'long' }), 'utf8')
+//以genStrategyFileName之檔名規則儲存策略檔, 檔名為雜湊格式, 識別資訊由檔內json承載
+let summary = { numTrade: 30, rEquivalentCumuProfitOrLossFinalNormYear: '31.25%' }
+let fn = genStrategyFileName('btc', '4hr', 'long', ['btc_4hr_ma_1day'], {}, summary)
+let data = { tid: 'long ║ ma_1day', tkid: 'long ║ ma_1day:12', levelNumTrade: 12, mode: 'long', summary }
+fs.writeFileSync(`${fd}/${fn}`, JSON.stringify(data), 'utf8')
 
 console.log(readStrategies(fd))
 // => [
 //   {
-//     path: './tmp/data-strategy/long ║ ma_1day ⊙ 12 ⊙ 31.25%.json',
-//     name: 'long ║ ma_1day ⊙ 12 ⊙ 31.25%.json',
+//     path: './tmp/data-strategy/long_12_a7578526a1fc57d8.json',
+//     name: 'long_12_a7578526a1fc57d8.json',
 //     tkid: 'long ║ ma_1day:12',
 //     tid: 'long ║ ma_1day',
 //     levelNumTrade: '12',
@@ -5124,7 +5134,47 @@ console.log(readStrategies(fd))
                 </td>
             
 
-            <td class="description last"><p>輸入是否讀取策略檔內容布林值，為true時各元素額外提供data欄位，內容非合法json時data為null，預設false</p></td>
+            <td class="description last"><p>輸入是否額外提供策略檔內容布林值，為true時各元素額外提供data欄位，內容非合法json時data為null，預設false</p></td>
+        </tr>
+
+    
+
+        <tr>
+            
+                <td class="name"><code>fromContent</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type">String</span>
+
+
+
+            
+            </td>
+
+            
+                <td class="attributes">
+                
+                    &lt;optional><br>
+                
+
+                
+
+                
+                </td>
+            
+
+            
+                <td class="default">
+                
+                    <code>'auto'</code>
+                
+                </td>
+            
+
+            <td class="description last"><p>輸入解析來源字串，可選'filename'(由檔名反解)、'content'(讀檔內json欄位)與'auto'(依檔名格式逐檔判別)，給予其他值時亦採'auto'，預設'auto'</p></td>
         </tr>
 
     
@@ -5199,7 +5249,7 @@ console.log(readStrategies(fd))
 <br class="clear">
 
 <footer>
-    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 4.0.5</a> on Sat Aug 08 2026 15:29:17 GMT+0800 (台北標準時間) using the <a href="https://github.com/clenemt/docdash">docdash</a> theme.
+    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 4.0.5</a> on Mon Aug 10 2026 21:53:44 GMT+0800 (台北標準時間) using the <a href="https://github.com/clenemt/docdash">docdash</a> theme.
 </footer>
 
 <script>prettyPrint();</script>
