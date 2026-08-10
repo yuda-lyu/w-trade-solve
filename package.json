@@ -1,6 +1,6 @@
 {
   "name": "w-trade-solve",
-  "version": "1.0.5",
+  "version": "2.0.1",
   "main": "dist/w-trade-solve.umd.js",
   "dependencies": {
     "w-data-tdprovide": "^1.0.6",

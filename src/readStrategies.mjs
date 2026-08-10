@@ -3,6 +3,7 @@ import each from 'lodash-es/each.js'
 import filter from 'lodash-es/filter.js'
 import get from 'lodash-es/get.js'
 import size from 'lodash-es/size.js'
+import cstr from 'wsemi/src/cstr.mjs'
 import fsIsFolder from 'wsemi/src/fsIsFolder.mjs'
 import fsReadJson from 'wsemi/src/fsReadJson.mjs'
 import fsTreeFolder from 'wsemi/src/fsTreeFolder.mjs'
@@ -12,37 +13,47 @@ import sep from 'wsemi/src/sep.mjs'
 import cont from './cont.mjs'
 
 
+//ptnFnHash, genStrategyFileName所產生之雜湊檔名樣式`${mode}_${levelNumTrade}_${hash16}.json`
+let ptnFnHash = /^(long|short)_\d+_[0-9a-f]{16}\.json$/
+
+
 /**
  * 讀取儲存策略資料夾內各策略檔資訊
  *
  * 僅列舉fd第1層之檔案，資料夾不列入，fd非資料夾或無任何檔案時回傳空陣列
- * 各檔以主檔名(剔除'.json')依cont.dlmPkgs切段，依序為tid、levelNumTrade與rEquivalentCumuProfitOrLossFinalNormYear，即genStrategyFileName所產生之檔名，切不出tid者予以略過
- * tid再依cont.dlmSeps切段，首段為mode，其餘為各key所組成之ps
+ * 各檔依opt.fromContent決定解析來源:
+ *   'filename'為舊式檔名反解: 以主檔名(剔除'.json')依cont.dlmPkgs切段，依序為tid、levelNumTrade與rEquivalentCumuProfitOrLossFinalNormYear，切不出tid者予以略過
+ *   'content'為讀取檔內json之tid、tkid、levelNumTrade與summary等欄位(即estimKeys所寫出之策略內容)，非合法json或無tid欄位者予以略過，因需讀檔故較'filename'慢
+ *   'auto'(預設)為逐檔判別: 檔名符合genStrategyFileName雜湊格式(`${mode}_${levelNumTrade}_${hash16}.json`)者走'content'，其餘走'filename'，故新舊格式混存時皆可列舉
+ * tid依cont.dlmSeps切段，首段為mode，其餘為各key所組成之ps
  * tkid為`${tid}:${levelNumTrade}`，與estimKeys內用於判斷同組keys與同交易次數級距之組合方式一致
  *
  * Unit Test: {@link https://github.com/yuda-lyu/w-trade-solve/blob/master/test/unit-readStrategies.test.mjs Github}
  * @function
  * @param {String} fd 輸入儲存策略資料夾字串
  * @param {Object} [opt={}] 輸入設定物件，預設{}
- * @param {Boolean} [opt.readContent=false] 輸入是否讀取策略檔內容布林值，為true時各元素額外提供data欄位，內容非合法json時data為null，預設false
+ * @param {Boolean} [opt.readContent=false] 輸入是否額外提供策略檔內容布林值，為true時各元素額外提供data欄位，內容非合法json時data為null，預設false
+ * @param {String} [opt.fromContent='auto'] 輸入解析來源字串，可選'filename'(由檔名反解)、'content'(讀檔內json欄位)與'auto'(依檔名格式逐檔判別)，給予其他值時亦採'auto'，預設'auto'
  * @returns {Array} 回傳策略資訊陣列，各元素為{path,name,tkid,tid,levelNumTrade,rEquivalentCumuProfitOrLossFinalNormYear,mode,ps}，opt.readContent為true時額外提供data
  * @example
  *
  * import fs from 'fs'
- * import cont from './src/cont.mjs'
+ * import genStrategyFileName from './src/genStrategyFileName.mjs'
  *
  * let fd = './tmp/data-strategy'
  * fs.mkdirSync(fd, { recursive: true })
  *
- * //以genStrategyFileName之檔名規則儲存策略檔
- * let fn = `long${cont.dlmSeps}ma_1day${cont.dlmPkgs}12${cont.dlmPkgs}31.25%.json`
- * fs.writeFileSync(`${fd}/${fn}`, JSON.stringify({ mode: 'long' }), 'utf8')
+ * //以genStrategyFileName之檔名規則儲存策略檔, 檔名為雜湊格式, 識別資訊由檔內json承載
+ * let summary = { numTrade: 30, rEquivalentCumuProfitOrLossFinalNormYear: '31.25%' }
+ * let fn = genStrategyFileName('btc', '4hr', 'long', ['btc_4hr_ma_1day'], {}, summary)
+ * let data = { tid: 'long ║ ma_1day', tkid: 'long ║ ma_1day:12', levelNumTrade: 12, mode: 'long', summary }
+ * fs.writeFileSync(`${fd}/${fn}`, JSON.stringify(data), 'utf8')
  *
  * console.log(readStrategies(fd))
  * // => [
  * //   {
- * //     path: './tmp/data-strategy/long ║ ma_1day ⊙ 12 ⊙ 31.25%.json',
- * //     name: 'long ║ ma_1day ⊙ 12 ⊙ 31.25%.json',
+ * //     path: './tmp/data-strategy/long_12_a7578526a1fc57d8.json',
+ * //     name: 'long_12_a7578526a1fc57d8.json',
  * //     tkid: 'long ║ ma_1day:12',
  * //     tid: 'long ║ ma_1day',
  * //     levelNumTrade: '12',
@@ -57,6 +68,12 @@ let readStrategies = (fd, opt = {}) => {
 
     //readContent
     let readContent = get(opt, 'readContent', false)
+
+    //fromContent
+    let fromContent = get(opt, 'fromContent', '')
+    if (fromContent !== 'filename' && fromContent !== 'content') {
+        fromContent = 'auto'
+    }
 
     //check
     if (!fsIsFolder(fd)) {
@@ -79,44 +96,111 @@ let readStrategies = (fd, opt = {}) => {
     let ss = []
     each(vfps, (v) => {
 
-        //qs
-        let name = replace(v.name, '.json', '')
-        let qs = sep(name, cont.dlmPkgs)
-
-        //tid
-        let tid = get(qs, 0, '')
-
-        //check
-        if (!isestr(tid)) {
-            return true //跳出換下一個
+        //useContent, 'auto'依檔名是否符合雜湊格式逐檔判別
+        let useContent = fromContent === 'content'
+        if (fromContent === 'auto') {
+            useContent = ptnFnHash.test(v.name)
         }
-
-        //levelNumTrade, rEquivalentCumuProfitOrLossFinalNormYear, ps, mode
-        let levelNumTrade = get(qs, 1, '')
-        let rEquivalentCumuProfitOrLossFinalNormYear = get(qs, 2, '')
-        let ps = sep(tid, cont.dlmSeps)
-        let mode = get(ps, 0, '')
-        ps = drop(ps)
-
-        //tkid
-        let tkid = `${tid}:${levelNumTrade}`
 
         //s
-        let s = {
-            path: v.path,
-            name: v.name,
-            tkid,
-            tid,
-            levelNumTrade,
-            rEquivalentCumuProfitOrLossFinalNormYear,
-            mode,
-            ps,
-        }
+        let s = null
 
-        //readContent
-        if (readContent) {
-            let d = fsReadJson(v.path) //回傳{success}或{error}, 讀取或解析失敗時data為null
-            s.data = get(d, 'success', null)
+        if (useContent) {
+
+            //data, 由檔內json取各欄位
+            let d = fsReadJson(v.path) //回傳{success}或{error}, 讀取或解析失敗時為null
+            let data = get(d, 'success', null)
+
+            //check
+            if (data === null) {
+                return true //跳出換下一個
+            }
+
+            //tid
+            let tid = get(data, 'tid', '')
+
+            //check
+            if (!isestr(tid)) {
+                return true //跳出換下一個
+            }
+
+            //levelNumTrade, 為與檔名反解之回傳格式一致, 轉為字串
+            let levelNumTrade = cstr(get(data, 'levelNumTrade', ''))
+
+            //rEquivalentCumuProfitOrLossFinalNormYear
+            let rEquivalentCumuProfitOrLossFinalNormYear = get(data, 'summary.rEquivalentCumuProfitOrLossFinalNormYear', '')
+
+            //ps, mode
+            let ps = sep(tid, cont.dlmSeps)
+            let mode = get(ps, 0, '')
+            ps = drop(ps)
+
+            //tkid, 舊內容無tkid欄位時由tid與levelNumTrade組出
+            let tkid = get(data, 'tkid', '')
+            if (!isestr(tkid)) {
+                tkid = `${tid}:${levelNumTrade}`
+            }
+
+            //s
+            s = {
+                path: v.path,
+                name: v.name,
+                tkid,
+                tid,
+                levelNumTrade,
+                rEquivalentCumuProfitOrLossFinalNormYear,
+                mode,
+                ps,
+            }
+
+            //readContent
+            if (readContent) {
+                s.data = data
+            }
+
+        }
+        else {
+
+            //qs
+            let name = replace(v.name, '.json', '')
+            let qs = sep(name, cont.dlmPkgs)
+
+            //tid
+            let tid = get(qs, 0, '')
+
+            //check
+            if (!isestr(tid)) {
+                return true //跳出換下一個
+            }
+
+            //levelNumTrade, rEquivalentCumuProfitOrLossFinalNormYear, ps, mode
+            let levelNumTrade = get(qs, 1, '')
+            let rEquivalentCumuProfitOrLossFinalNormYear = get(qs, 2, '')
+            let ps = sep(tid, cont.dlmSeps)
+            let mode = get(ps, 0, '')
+            ps = drop(ps)
+
+            //tkid
+            let tkid = `${tid}:${levelNumTrade}`
+
+            //s
+            s = {
+                path: v.path,
+                name: v.name,
+                tkid,
+                tid,
+                levelNumTrade,
+                rEquivalentCumuProfitOrLossFinalNormYear,
+                mode,
+                ps,
+            }
+
+            //readContent
+            if (readContent) {
+                let d = fsReadJson(v.path) //回傳{success}或{error}, 讀取或解析失敗時data為null
+                s.data = get(d, 'success', null)
+            }
+
         }
 
         //push

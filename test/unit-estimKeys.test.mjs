@@ -4,7 +4,7 @@ import path from 'path'
 import estimKeys from '../src/estimKeys.mjs'
 import readStrategies from '../src/readStrategies.mjs'
 import genTid from '../src/genTid.mjs'
-import cont from '../src/cont.mjs'
+import calcLevelNumTrade from '../src/calcLevelNumTrade.mjs'
 import ott from '../src/ott.mjs'
 import { buildFdTmp, buildFdData, name, symbol, interval } from './unit-setup.mjs'
 
@@ -15,7 +15,8 @@ import { buildFdTmp, buildFdData, name, symbol, interval } from './unit-setup.mj
 //    各key門檻由rang(-2,2,40)之41點各自平移+10與-10為82點, 解值>0代表'>'條件、<0代表'<'條件, 還原時扣除平移值
 //    以opt.methodOml指定之演算法求解(預設PSO), 各次以runStrategy回測並經calcFitness計算適應值
 //    滿足thNumTrade、thRWin與thREquivalentCumuProfitOrLossFinalNormYear三門檻者, 以genStrategyFileName存入fdData
-//    同tkid(tid+級距)已有策略時, 僅於等效年化盈虧更佳時抽換並刪除較差者, 故同tkid恆僅一檔
+//    檔名為tkid之純函數(雜湊格式), 同tkid已有策略時僅於等效年化盈虧更佳時原地覆寫, 故同tkid恆僅一檔
+//    策略檔內容除策略本體與summary、fitness外, 另落地tkid、levelNumTrade、keys與solve區塊使欄位自足
 //    fdData不存在時自動建立
 
 
@@ -113,6 +114,32 @@ describe('estimKeys', function() {
                 assert.strictEqual(c.keyOhlc, 'btc_price_4hr') //`${name}_price_${interval}`
                 assert.ok(Number.isFinite(c.fitness))
                 assert.ok(typeof c.summary === 'object' && c.summary !== null)
+            })
+        })
+
+        it('策略檔內容欄位自足: 含tkid、levelNumTrade與keys, 識別不依賴檔名', function() {
+            let ss = readStrategies(d.fdData, { readContent: true })
+            ss.forEach((s) => {
+                let c = s.data
+                assert.strictEqual(c.levelNumTrade, calcLevelNumTrade(Number(c.summary.numTrade)))
+                assert.strictEqual(c.tkid, `${c.tid}:${c.levelNumTrade}`)
+                assert.deepStrictEqual(c.keys, keys)
+            })
+        })
+
+        it('策略檔內容含solve區塊, 記錄求解時間窗、演算法與三門檻等求解條件', function() {
+            let ss = readStrategies(d.fdData, { readContent: true })
+            ss.forEach((s) => {
+                let c = s.data
+                assert.strictEqual(c.solve.timeStart, d.timeStart)
+                assert.strictEqual(c.solve.timeEnd, d.timeEnd)
+                assert.strictEqual(c.solve.methodOml, 'PSO') //未給methodOml時採PSO, 記錄實際採用者
+                assert.strictEqual(c.solve.thNumTrade, optBase.thNumTrade)
+                assert.strictEqual(c.solve.thRWin, optBase.thRWin)
+                assert.strictEqual(c.solve.thREquivalentCumuProfitOrLossFinalNormYear, optBase.thREquivalentCumuProfitOrLossFinalNormYear)
+                assert.deepStrictEqual(c.solve.thsTp, optBase.thsTp)
+                assert.deepStrictEqual(c.solve.thsSl, optBase.thsSl)
+                assert.match(c.solve.timeSolved, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/)
             })
         })
 
@@ -488,14 +515,13 @@ describe('estimKeys', function() {
 
     describe('策略檔名規則', function() {
 
-        it('檔名恰可由dlmPkgs切為3段', function() {
+        it('檔名為雜湊格式`${mode}_${levelNumTrade}_${hash16}.json`, 長度固定不受keys個數影響', function() {
             //由求解階段所產生之檔案驗證
             let fdData = path.resolve(fdTmp, 'solve', 'data-strategy')
             let fns = fs.readdirSync(fdData)
             assert.ok(fns.length > 0)
             fns.forEach((fn) => {
-                assert.strictEqual(fn.slice(0, -5).split(cont.dlmPkgs).length, 3, `檔名 ${fn}`)
-                assert.ok(fn.endsWith('.json'), `檔名 ${fn}`)
+                assert.match(fn, /^long_\d+_[0-9a-f]{16}\.json$/, `檔名 ${fn}`)
             })
         })
 

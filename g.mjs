@@ -95,9 +95,10 @@ async function test() {
     console.log(wts.calcLevelNumTrade(3), wts.calcLevelNumTrade(30), wts.calcLevelNumTrade(300))
     // => 1 12 102
 
-    //genStrategyFileName, 策略儲存檔名, 為`${tid} ⊙ ${級距} ⊙ ${等效年化盈虧}.json`
+    //genStrategyFileName, 策略儲存檔名, 為`${mode}_${級距}_${雜湊16碼}.json`, 雜湊由coin、interval、tid與級距算出
+    //  檔名為tkid之純函數且長度固定, 同tkid恆對應同一檔名, 故存檔端可直查覆寫而不需列舉全庫
     console.log(wts.genStrategyFileName('btc', '4hr', 'long', keys, {}, { numTrade: 30, rEquivalentCumuProfitOrLossFinalNormYear: '31.25%' }))
-    // => 'long ║ ma_1day ⊙ 12 ⊙ 31.25%.json'
+    // => 'long_12_a7578526a1fc57d8.json'
 
     //calcFitness, 求解所用之目標函數值, 越小越佳, 由勝率(權重 2)與等效年化盈虧(權重 1)組成
     console.log(wts.calcFitness({ uIni: 1000 }, { numTrade: 30, uEquityFinal: 1200, rWin: '60%', rEquivalentCumuProfitOrLossFinalNormYear: '25%' }))

@@ -7,10 +7,10 @@ import size from 'lodash-es/size.js'
 import cint from 'wsemi/src/cint.mjs'
 import dig from 'wsemi/src/dig.mjs'
 import fsCreateFolder from 'wsemi/src/fsCreateFolder.mjs'
-import fsDeleteFile from 'wsemi/src/fsDeleteFile.mjs'
+import fsIsFile from 'wsemi/src/fsIsFile.mjs'
 import fsIsFolder from 'wsemi/src/fsIsFolder.mjs'
+import fsReadJson from 'wsemi/src/fsReadJson.mjs'
 import fsWriteJson from 'wsemi/src/fsWriteJson.mjs'
-import haskey from 'wsemi/src/haskey.mjs'
 import isearr from 'wsemi/src/isearr.mjs'
 import isestr from 'wsemi/src/isestr.mjs'
 import isnum from 'wsemi/src/isnum.mjs'
@@ -23,7 +23,6 @@ import omlPSO from 'w-optimization/src/omlPSO.mjs'
 import omlACO from 'w-optimization/src/omlACO.mjs'
 import dataProvide from 'w-data-tdprovide'
 import runStrategy from 'w-trade-backtest/src/runStrategy.mjs'
-import readStrategies from './readStrategies.mjs'
 import genTid from './genTid.mjs'
 import genSid from './genSid.mjs'
 import p2r from './p2r.mjs'
@@ -38,7 +37,8 @@ import genStrategyFileName from './genStrategyFileName.mjs'
  * 設計變數為[止損比例, 止盈比例, ...各key之門檻]，止損與止盈由opt.thsSl與opt.thsTp給予之百分比清單離散取值
  * 各key門檻取值範圍為[-thLim,thLim]切為thLim*20段，並各自平移+vdir與-vdir(vdir=thLim*5)為兩組，使解值恆大於0代表'>'條件、恆小於0代表'<'條件，還原時再扣除平移值，故單一設計變數即同時涵蓋大於與小於兩種條件
  * 以w-optimization之最佳化函數求解，由opt.methodOml指定演算法，各次計算皆以w-trade-backtest之runStrategy回測並經calcFitness計算適應值
- * 各次計算結果若同時滿足交易次數、勝率與最終等效年化盈虧三門檻，則以genStrategyFileName產生檔名存入fdData；同tid且同交易次數級距(tkid)已有策略時，僅於最終等效年化盈虧更佳時抽換，並刪除較差者
+ * 各次計算結果若同時滿足交易次數、勝率與最終等效年化盈虧三門檻，則以genStrategyFileName產生檔名存入fdData；檔名為tkid(tid+交易次數級距)之純函數，故直接組出檔名查詢既有策略(O(1)，不列舉全庫)，同tkid已有策略時僅於最終等效年化盈虧更佳時原地覆寫，故同tkid恆僅一檔；覆寫前驗證舊檔內tkid、name與interval與本次一致，不一致代表雜湊碰撞，直接throw以避免無聲覆寫
+ * 策略檔內容除策略本體(tid、sid、name、symbol、interval、keyOhlc、mode、conds、settings)與summary、fitness外，另落地tkid、levelNumTrade、keys與solve區塊(timeStart、timeEnd、methodOml、thNumTrade、thRWin、thREquivalentCumuProfitOrLossFinalNormYear、thsTp、thsSl、timeSolved)，使識別與求解條件欄位自足，不依賴檔名
  * opt除下列各欄位外，其餘欄位皆原樣傳遞至所選之最佳化函數，兩者欄位名稱無重疊，故可一併給予求解設定
  * 各演算法共通之設定為NContiguous(最佳解連續未更新次數上限，預設100)、NRepeat、NCore、ModeOutLimit、UseRepeat、UseImmigration、LocalSearchMethod與funGetBetter、funGenerationBefore、funGenerationAfter三接口；族群數與迴圈數之欄位名稱各演算法不同，RGA與DE為Np與Ng、PSO為Np與Nl、HS為Ns與Ni、ACO為Na與Nl；另各演算法有其專屬超參數，如PSO之psoC1Start、RGA之rgaCrossover、DE之deF、HS之hsHMCR與ACO之acoAlphaStart等
  * 預設之求解量甚大(單一key約需1萬7千次回測)，僅需快速試算時可調小族群數與NContiguous
@@ -46,7 +46,7 @@ import genStrategyFileName from './genStrategyFileName.mjs'
  *
  * Unit Test: {@link https://github.com/yuda-lyu/w-trade-solve/blob/master/test/unit-estimKeys.test.mjs Github}
  * @function
- * @param {Function} ott 輸入時區時間函數，傳入時間字串回傳dayjs時間物件，可用src/ott.mjs
+ * @param {Function} ott 輸入時區時間函數，傳入時間字串回傳dayjs時間物件，未傳入時回傳當下時間(供solve.timeSolved記錄)，可用src/ott.mjs
  * @param {String} name 輸入幣種名稱字串，例如'btc'，用於組出K線序列key(`${name}_price_${interval}`)與縮寫tid
  * @param {String} symbol 輸入交易對名稱字串，例如'BTCUSDT'，僅儲存至策略內供辨識
  * @param {String} interval 輸入K線週期字串，例如'4hr'
@@ -129,8 +129,8 @@ let estimKeys = async (ott, name, symbol, interval, fdOhlc, fdParam, timeStart, 
     }
 
     let methodOml = get(opt, 'methodOml', '')
-    if (!isestr(methodOml)) {
-        methodOml = 'PSO'
+    if (methodOml !== 'RGA' && methodOml !== 'DE' && methodOml !== 'HS' && methodOml !== 'PSO' && methodOml !== 'ACO') {
+        methodOml = 'PSO' //非五者之一時採PSO, 使solve.methodOml記錄實際採用之演算法
     }
     let thsTp = get(opt, 'thsTp', null)
     if (!isearr(thsTp)) {
@@ -366,14 +366,36 @@ let estimKeys = async (ott, name, symbol, interval, fdOhlc, fdParam, timeStart, 
         //fitness
         let fitness = calcFitness(strategy.settings, r.summary)
 
-        //res
+        //levelNumTrade
+        let levelNumTrade = calcLevelNumTrade(numTrade)
+
+        //tkid
+        let tkid = `${tid}:${levelNumTrade}`
+
+        //res, 除策略本體與summary、fitness外, 落地tkid、levelNumTrade、keys與solve使欄位自足, 識別與求解條件不依賴檔名
         let res = {
 
             ...strategy,
 
+            tkid,
+            levelNumTrade,
+            keys,
+
             summary: r.summary,
 
             fitness,
+
+            solve: {
+                timeStart,
+                timeEnd,
+                methodOml,
+                thNumTrade,
+                thRWin,
+                thREquivalentCumuProfitOrLossFinalNormYear,
+                thsTp,
+                thsSl,
+                timeSolved: ott().format('YYYY-MM-DDTHH:mm:ss'),
+            },
 
         }
         //  console.log(ifun, res)
@@ -425,21 +447,11 @@ let estimKeys = async (ott, name, symbol, interval, fdOhlc, fdParam, timeStart, 
                 console.log(ifun, '可用參數組', resBrief)
             }
 
-            //kpTid
-            let kpTkid = {}
-            if (true) {
-                let ss = readStrategies(fdData, { readContent: false })
-                each(ss, (s) => {
-                    kpTkid[s.tkid] = s
-                })
-            }
-            // console.log('kpTkid', kpTkid)
+            //fnStrategy, 檔名為tkid之純函數, 故可直接組出檔名查詢既有策略, 不需列舉全庫
+            let fnStrategy = genStrategyFileName(name, interval, mode, keys, strategy.settings, r.summary)
 
-            //levelNumTrade
-            let levelNumTrade = calcLevelNumTrade(numTrade)
-
-            //tkid
-            let tkid = `${tid}:${levelNumTrade}`
+            //fpStrategy
+            let fpStrategy = path.resolve(fdData, fnStrategy)
 
             //b
             let b = false
@@ -447,23 +459,41 @@ let estimKeys = async (ott, name, symbol, interval, fdOhlc, fdParam, timeStart, 
             //rEquivalentCumuProfitOrLossFinalNormYearNew
             let rEquivalentCumuProfitOrLossFinalNormYearNew = rEquivalentCumuProfitOrLossFinalNormYear
 
-            //檢查是否已有tid策略
-            if (haskey(kpTkid, tkid)) {
+            //檢查是否已有同tkid策略
+            if (fsIsFile(fpStrategy)) {
 
-                //rEquivalentCumuProfitOrLossFinalNormYearOld
-                let rEquivalentCumuProfitOrLossFinalNormYearOld = p2r(kpTkid[tkid].rEquivalentCumuProfitOrLossFinalNormYear)
+                //dataOld
+                let dOld = fsReadJson(fpStrategy) //回傳{success}或{error}, 讀取或解析失敗時為null
+                let dataOld = get(dOld, 'success', null)
 
-                //check
-                if (rEquivalentCumuProfitOrLossFinalNormYearNew > rEquivalentCumuProfitOrLossFinalNormYearOld) {
+                if (dataOld === null) {
 
-                    //出現更好的等效盈虧比例, 須抽換
+                    //舊檔非合法json, 直接覆寫
                     b = true
 
-                    //先刪除較差tid策略
-                    if (useShowLog) {
-                        console.log(`刪除較差策略...`, `${rEquivalentCumuProfitOrLossFinalNormYearNew} > ${rEquivalentCumuProfitOrLossFinalNormYearOld}`, kpTkid[tkid].path)
+                }
+                else {
+
+                    //覆寫前驗證舊檔身分與本次一致, 不一致代表雜湊碰撞, 直接throw以避免無聲覆寫
+                    let tkidOld = get(dataOld, 'tkid', '')
+                    let nameOld = get(dataOld, 'name', '')
+                    let intervalOld = get(dataOld, 'interval', '')
+                    if ((isestr(tkidOld) && tkidOld !== tkid) || (isestr(nameOld) && nameOld !== name) || (isestr(intervalOld) && intervalOld !== interval)) {
+                        throw new Error(`hash collision: fnStrategy[${fnStrategy}], tkidOld[${tkidOld}] vs tkid[${tkid}], nameOld[${nameOld}] vs name[${name}], intervalOld[${intervalOld}] vs interval[${interval}]`)
                     }
-                    fsDeleteFile(kpTkid[tkid].path)
+
+                    //rEquivalentCumuProfitOrLossFinalNormYearOld
+                    let rEquivalentCumuProfitOrLossFinalNormYearOld = p2r(get(dataOld, 'summary.rEquivalentCumuProfitOrLossFinalNormYear', ''))
+
+                    //check, 出現更好的等效盈虧比例, 原地覆寫
+                    if (rEquivalentCumuProfitOrLossFinalNormYearNew > rEquivalentCumuProfitOrLossFinalNormYearOld) {
+
+                        if (useShowLog) {
+                            console.log(`覆寫較差策略...`, `${rEquivalentCumuProfitOrLossFinalNormYearNew} > ${rEquivalentCumuProfitOrLossFinalNormYearOld}`, fpStrategy)
+                        }
+                        b = true
+
+                    }
 
                 }
 
@@ -477,12 +507,6 @@ let estimKeys = async (ott, name, symbol, interval, fdOhlc, fdParam, timeStart, 
 
             //save
             if (b) {
-
-                //fnStrategy
-                let fnStrategy = genStrategyFileName(name, interval, mode, keys, strategy.settings, r.summary)
-
-                //fpStrategy
-                let fpStrategy = path.resolve(fdData, fnStrategy)
 
                 //fsWriteJson
                 fsWriteJson(fpStrategy, res, { useFormat: true })
