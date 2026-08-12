@@ -4,7 +4,9 @@ import path from 'path'
 import estimKeys from '../src/estimKeys.mjs'
 import readStrategies from '../src/readStrategies.mjs'
 import genTid from '../src/genTid.mjs'
+import genStrategyFileName from '../src/genStrategyFileName.mjs'
 import calcLevelNumTrade from '../src/calcLevelNumTrade.mjs'
+import calcFitness from '../src/calcFitness.mjs'
 import ott from '../src/ott.mjs'
 import { buildFdTmp, buildFdData, name, symbol, interval } from './unit-setup.mjs'
 
@@ -16,7 +18,9 @@ import { buildFdTmp, buildFdData, name, symbol, interval } from './unit-setup.mj
 //    以opt.methodOml指定之演算法求解(預設PSO), 各次以runStrategy回測並經calcFitness計算適應值
 //    滿足thNumTrade、thRWin與thREquivalentCumuProfitOrLossFinalNormYear三門檻者, 以genStrategyFileName存入fdData
 //    檔名為tkid之純函數(雜湊格式), 同tkid已有策略時僅於等效年化盈虧更佳時原地覆寫, 故同tkid恆僅一檔
-//    策略檔內容除策略本體與summary、fitness外, 另落地tkid、levelNumTrade、keys與solve區塊使欄位自足
+//    策略檔內容除策略本體與summary、fitness外, 另落地tkid、numTrade、levelNumTrade、keys與solve區塊使欄位自足
+//    opt.funRunStrategyCustom可注入自訂評估核心(回傳{summary}), 求解全程改用之
+//    opt.useRunStrategyBeforeSave為true時存檔前重跑回測, 檔內numTrade/levelNumTrade/tkid/fitness皆由重跑之summary重新衍生(genRes同源)
 //    fdData不存在時自動建立
 
 
@@ -117,13 +121,15 @@ describe('estimKeys', function() {
             })
         })
 
-        it('策略檔內容欄位自足: 含tkid、levelNumTrade與keys, 識別不依賴檔名', function() {
+        it('策略檔內容欄位自足: 含tkid、numTrade、levelNumTrade與keys, 識別不依賴檔名', function() {
             let ss = readStrategies(d.fdData, { readContent: true })
             ss.forEach((s) => {
                 let c = s.data
+                assert.strictEqual(c.numTrade, Number(c.summary.numTrade))
                 assert.strictEqual(c.levelNumTrade, calcLevelNumTrade(Number(c.summary.numTrade)))
                 assert.strictEqual(c.tkid, `${c.tid}:${c.levelNumTrade}`)
                 assert.deepStrictEqual(c.keys, keys)
+                assert.strictEqual(c.fitness, calcFitness(c.settings, c.summary)) //fitness與summary同源
             })
         })
 
@@ -196,6 +202,191 @@ describe('estimKeys', function() {
             })
 
             assert.deepStrictEqual(readStrategies(d.fdData), [])
+        })
+
+    })
+
+    describe('自訂評估核心funRunStrategyCustom', function() {
+
+        let keys = ['btc_4hr_ma_1day']
+        let d = null
+
+        before(function() {
+            d = buildFdData(fdTmp, 'custom', keys, { n: 20 })
+        })
+
+        //optQuick: 縮小求解量之共用設定
+        let optQuick = {
+            ...optBase,
+            Np: 8,
+            NContiguous: 5,
+            UseRepeat: false,
+            UseImmigration: false,
+        }
+
+        //smStub: 過三門檻之固定精簡summary(含契約要求之numTrade/rWin/uEquityFinal/eqYr四欄)
+        let smStub = {
+            numTrade: 10,
+            rWin: '60.00%',
+            uEquityFinal: 1005,
+            rEquivalentCumuProfitOrLossFinalNormYear: '20.00%',
+            rTradeAllMax: '1.00%',
+        }
+
+        //call: 以獨立策略資料夾執行求解並讀回策略檔
+        let call = async (tag, extra = {}) => {
+            let fdData = path.resolve(fdTmp, 'custom', `s-${tag}`)
+            let m = await estimKeys(ott, name, symbol, interval, d.fdOhlc, d.fdParam, d.timeStart, d.timeEnd, 'long', keys, fdData, {
+                ...optQuick,
+                ...extra,
+            })
+            let ss = readStrategies(fdData, { readContent: true })
+            return { m, ss }
+        }
+
+        it('注入後求解全程改用自訂函數, 並收到{ott,strategy,funGetSeries}', async function() {
+            let nCall = 0
+            let gotShape = false
+            let { m, ss } = await call('inject', {
+                funRunStrategyCustom: async ({ ott, strategy, funGetSeries }) => {
+                    nCall++
+                    if (!gotShape) {
+                        gotShape = typeof ott === 'function' && typeof funGetSeries === 'function' && Array.isArray(strategy.conds) && strategy.mode === 'long'
+                    }
+                    return { summary: smStub }
+                },
+            })
+            assert.ok(nCall > 0, '自訂函數未被呼叫')
+            assert.strictEqual(nCall, m.stopExecutions, '自訂函數呼叫次數須等於核心分析次數')
+            assert.ok(gotShape, '自訂函數收到之引數形式非預期')
+            assert.strictEqual(ss.length, 1, 'stub固定summary故同tkid恆僅一檔')
+        })
+
+        it('預設不重跑, 存檔即為自訂函數之summary, 衍生欄位與之同源', async function() {
+            let { ss } = await call('nosave-rerun', {
+                funRunStrategyCustom: async () => {
+                    return { summary: smStub }
+                },
+            })
+            let c = ss[0].data
+            assert.deepStrictEqual(c.summary, smStub)
+            assert.strictEqual(c.numTrade, 10)
+            assert.strictEqual(c.levelNumTrade, calcLevelNumTrade(10))
+            assert.strictEqual(c.tkid, `${c.tid}:${calcLevelNumTrade(10)}`)
+            assert.strictEqual(c.fitness, calcFitness(c.settings, smStub))
+        })
+
+        it('useRunStrategyBeforeSave為true時存檔前重跑runStrategy, 落地完整官方summary且全部衍生欄位同源', async function() {
+            //stub僅首次評估放行門檻: 官方重跑之numTrade級距與stub可能不同, 若後續評估再查同檔會觸發tkid不一致throw(該防護屬預期行為), 故僅存檔一次
+            let nCall = 0
+            let { ss } = await call('save-rerun', {
+                funRunStrategyCustom: async () => {
+                    nCall++
+                    if (nCall === 1) {
+                        return { summary: smStub }
+                    }
+                    return { summary: { ...smStub, numTrade: 0 } } //不過thNumTrade門檻
+                },
+                useRunStrategyBeforeSave: true,
+            })
+            assert.ok(ss.length >= 1)
+            ss.forEach((s) => {
+                let c = s.data
+                //官方summary具stub沒有的完整欄位
+                assert.ok('rSharpe' in c.summary, '落地summary須為官方完整欄位')
+                assert.ok('rDrawdownMax' in c.summary)
+                //檔內衍生欄位由重跑之summary重新衍生(genRes同源)
+                assert.strictEqual(c.numTrade, Number(c.summary.numTrade))
+                assert.strictEqual(c.levelNumTrade, calcLevelNumTrade(Number(c.summary.numTrade)))
+                assert.strictEqual(c.tkid, `${c.tid}:${c.levelNumTrade}`)
+                assert.strictEqual(c.fitness, calcFitness(c.settings, c.summary))
+            })
+        })
+
+        it('funRunStrategyCustomBeforeSave給定時, 存檔前改用該函數', async function() {
+            let smSave = { ...smStub, rEquivalentCumuProfitOrLossFinalNormYear: '33.00%', numTrade: 12 }
+            let { ss } = await call('save-custom', {
+                funRunStrategyCustom: async () => {
+                    return { summary: smStub }
+                },
+                useRunStrategyBeforeSave: true,
+                funRunStrategyCustomBeforeSave: async () => {
+                    return { summary: smSave }
+                },
+            })
+            let c = ss[0].data
+            assert.deepStrictEqual(c.summary, smSave)
+            assert.strictEqual(c.numTrade, 12) //由重跑summary重新衍生
+            assert.strictEqual(c.fitness, calcFitness(c.settings, smSave))
+        })
+
+        it('重跑結果跨級距時, 檔名以重跑summary重算, 檔名與檔內同源', async function() {
+            //stub級距11(numTrade 10), 重跑回傳級距12(numTrade 30) → 檔案應落在級距12檔名
+            let smSave = { ...smStub, numTrade: 30, rEquivalentCumuProfitOrLossFinalNormYear: '33.00%' }
+            let nCall = 0
+            let { ss } = await call('save-relevel', {
+                funRunStrategyCustom: async () => {
+                    nCall++
+                    return { summary: nCall === 1 ? smStub : { ...smStub, numTrade: 0 } } //僅首次放行, 避免後續評估以級距11舊檔名再查
+                },
+                useRunStrategyBeforeSave: true,
+                funRunStrategyCustomBeforeSave: async () => {
+                    return { summary: smSave }
+                },
+            })
+            assert.strictEqual(ss.length, 1)
+            assert.match(ss[0].name, /^long_12_[0-9a-f]{16}\.json$/, `檔名 ${ss[0].name} 須為重跑之級距12`)
+            let c = ss[0].data
+            assert.strictEqual(c.numTrade, 30)
+            assert.strictEqual(c.levelNumTrade, 12)
+            assert.strictEqual(c.tkid, `${c.tid}:12`)
+        })
+
+        it('跨級距且新檔名已有更佳者時, 放棄本次寫入', async function() {
+            //預置級距12檔案(eqYr 50%), 重跑回傳級距12但eqYr 33%較差 → 不得覆寫
+            let fdData = path.resolve(fdTmp, 'custom', 's-relevel-keep')
+            fs.mkdirSync(fdData, { recursive: true })
+            let tid = genTid(name, '4hr', 'long', keys)
+            let smBetter = { numTrade: 30, rWin: '70.00%', uEquityFinal: 1010, rEquivalentCumuProfitOrLossFinalNormYear: '50.00%' }
+            let fnBetter = genStrategyFileName(name, '4hr', 'long', keys, {}, smBetter)
+            fs.writeFileSync(path.resolve(fdData, fnBetter), JSON.stringify({
+                tid,
+                tkid: `${tid}:12`,
+                name,
+                interval: '4hr',
+                summary: smBetter,
+            }), 'utf8')
+
+            let smSave = { ...smStub, numTrade: 30, rEquivalentCumuProfitOrLossFinalNormYear: '33.00%' }
+            let nCall = 0
+            await estimKeys(ott, name, symbol, interval, d.fdOhlc, d.fdParam, d.timeStart, d.timeEnd, 'long', keys, fdData, {
+                ...optQuick,
+                funRunStrategyCustom: async () => {
+                    nCall++
+                    return { summary: nCall === 1 ? smStub : { ...smStub, numTrade: 0 } }
+                },
+                useRunStrategyBeforeSave: true,
+                funRunStrategyCustomBeforeSave: async () => {
+                    return { summary: smSave }
+                },
+            })
+
+            let ss = readStrategies(fdData, { readContent: true })
+            assert.strictEqual(ss.length, 1, '不得產生新檔')
+            assert.strictEqual(ss[0].data.summary.rEquivalentCumuProfitOrLossFinalNormYear, '50.00%', '既有更佳者不得被覆寫')
+        })
+
+        it('未開useRunStrategyBeforeSave時, funRunStrategyCustomBeforeSave不生效', async function() {
+            let smSave = { ...smStub, rEquivalentCumuProfitOrLossFinalNormYear: '33.00%' }
+            let { ss } = await call('save-custom-off', {
+                funRunStrategyCustom: async () => {
+                    return { summary: smStub }
+                },
+                funRunStrategyCustomBeforeSave: async () => {
+                    return { summary: smSave }
+                },
+            })
+            assert.deepStrictEqual(ss[0].data.summary, smStub)
         })
 
     })

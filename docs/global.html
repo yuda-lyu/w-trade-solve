@@ -1841,9 +1841,9 @@ await estimFinder(ott, 'btc', 'BTCUSDT', '4hr', './data/ohlc', './data/param', '
     <dd class="tag-description"><ul class="dummy"><li><p>針對指定keys率定各key之門檻與止盈止損，求解最佳策略</p>
 <p>設計變數為[止損比例, 止盈比例, ...各key之門檻]，止損與止盈由opt.thsSl與opt.thsTp給予之百分比清單離散取值
 各key門檻取值範圍為[-thLim,thLim]切為thLim<em>20段，並各自平移+vdir與-vdir(vdir=thLim</em>5)為兩組，使解值恆大於0代表'&gt;'條件、恆小於0代表'&lt;'條件，還原時再扣除平移值，故單一設計變數即同時涵蓋大於與小於兩種條件
-以w-optimization之最佳化函數求解，由opt.methodOml指定演算法，各次計算皆以w-trade-backtest之runStrategy回測並經calcFitness計算適應值
+以w-optimization之最佳化函數求解，由opt.methodOml指定演算法，各次計算皆以w-trade-backtest之runStrategy回測並經calcFitness計算適應值；亦可由opt.funRunStrategyCustom注入自訂評估核心加速求解(如以w-trade-backtest之buildStrategyFastSession預算first-touch表與因子對位序列)，注入僅回傳精簡欄位之核心時可配合opt.useRunStrategyBeforeSave於存檔前重跑完整回測，使落地summary維持完整欄位口徑；存檔前重跑後檔內numTrade、levelNumTrade、tkid、fitness與檔名皆由重跑之summary重新衍生，確保檔名與檔案內容同源一致；重算檔名與原檔名不同(評估核心與重跑結果跨級距)時，對新檔名重做存在檢查、身分驗證與優劣比較，新檔名已有更佳者則放棄本次寫入
 各次計算結果若同時滿足交易次數、勝率與最終等效年化盈虧三門檻，則以genStrategyFileName產生檔名存入fdData；檔名為tkid(tid+交易次數級距)之純函數，故直接組出檔名查詢既有策略(O(1)，不列舉全庫)，同tkid已有策略時僅於最終等效年化盈虧更佳時原地覆寫，故同tkid恆僅一檔；覆寫前驗證舊檔內tkid、name與interval與本次一致，不一致代表雜湊碰撞，直接throw以避免無聲覆寫
-策略檔內容除策略本體(tid、sid、name、symbol、interval、keyOhlc、mode、conds、settings)與summary、fitness外，另落地tkid、levelNumTrade、keys與solve區塊(timeStart、timeEnd、methodOml、thNumTrade、thRWin、thREquivalentCumuProfitOrLossFinalNormYear、thsTp、thsSl、timeSolved)，使識別與求解條件欄位自足，不依賴檔名
+策略檔內容除策略本體(tid、sid、name、symbol、interval、keyOhlc、mode、conds、settings)與summary、fitness外，另落地tkid、numTrade、levelNumTrade、keys與solve區塊(timeStart、timeEnd、methodOml、thNumTrade、thRWin、thREquivalentCumuProfitOrLossFinalNormYear、thsTp、thsSl、timeSolved)，使識別與求解條件欄位自足，不依賴檔名
 opt除下列各欄位外，其餘欄位皆原樣傳遞至所選之最佳化函數，兩者欄位名稱無重疊，故可一併給予求解設定
 各演算法共通之設定為NContiguous(最佳解連續未更新次數上限，預設100)、NRepeat、NCore、ModeOutLimit、UseRepeat、UseImmigration、LocalSearchMethod與funGetBetter、funGenerationBefore、funGenerationAfter三接口；族群數與迴圈數之欄位名稱各演算法不同，RGA與DE為Np與Ng、PSO為Np與Nl、HS為Ns與Ni、ACO為Na與Nl；另各演算法有其專屬超參數，如PSO之psoC1Start、RGA之rgaCrossover、DE之deF、HS之hsHMCR與ACO之acoAlphaStart等
 預設之求解量甚大(單一key約需1萬7千次回測)，僅需快速試算時可調小族群數與NContiguous
@@ -1854,7 +1854,7 @@ name、symbol、interval、fdOhlc、fdParam、timeStart、timeEnd、keys、fdDat
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="estimKeys.mjs.html">estimKeys.mjs</a>, <a href="estimKeys.mjs.html#line98">line 98</a>
+        <a href="estimKeys.mjs.html">estimKeys.mjs</a>, <a href="estimKeys.mjs.html#line103">line 103</a>
     </li></ul></dd>
     
 
@@ -2652,6 +2652,126 @@ console.log(mQuick.stopExecutions) //核心分析次數, 較預設設定大幅�
             
 
             <td class="description last"><p>輸入策略須儲存之最低最終等效年化盈虧比例數值，預設0.15</p></td>
+        </tr>
+
+    
+
+        <tr>
+            
+                <td class="name"><code>funRunStrategyCustom</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type">function</span>
+
+
+
+            
+            </td>
+
+            
+                <td class="attributes">
+                
+                    &lt;optional><br>
+                
+
+                
+
+                
+                </td>
+            
+
+            
+                <td class="default">
+                
+                    <code>null</code>
+                
+                </td>
+            
+
+            <td class="description last"><p>輸入自訂回測評估async函數，傳入{ott,strategy,funGetSeries}物件，須回傳{summary}且summary至少含numTrade、rWin、uEquityFinal與rEquivalentCumuProfitOrLossFinalNormYear四欄，各欄語義須與runStrategy等值，回傳之準確性由注入端負責；未給時採runStrategy，預設null</p></td>
+        </tr>
+
+    
+
+        <tr>
+            
+                <td class="name"><code>useRunStrategyBeforeSave</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type">Boolean</span>
+
+
+
+            
+            </td>
+
+            
+                <td class="attributes">
+                
+                    &lt;optional><br>
+                
+
+                
+
+                
+                </td>
+            
+
+            
+                <td class="default">
+                
+                    <code>false</code>
+                
+                </td>
+            
+
+            <td class="description last"><p>輸入存檔前是否重跑一次回測並以其summary重新衍生檔案內容與檔名布林值，注入僅回傳精簡欄位之評估核心時應設true以維持策略檔欄位口徑，求解搜索仍全程使用自訂函數不受影響，預設false</p></td>
+        </tr>
+
+    
+
+        <tr>
+            
+                <td class="name"><code>funRunStrategyCustomBeforeSave</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type">function</span>
+
+
+
+            
+            </td>
+
+            
+                <td class="attributes">
+                
+                    &lt;optional><br>
+                
+
+                
+
+                
+                </td>
+            
+
+            
+                <td class="default">
+                
+                    <code>null</code>
+                
+                </td>
+            
+
+            <td class="description last"><p>輸入存檔前重跑用之自訂回測async函數，介面同opt.funRunStrategyCustom，僅於opt.useRunStrategyBeforeSave為true時生效，未給時採runStrategy，預設null</p></td>
         </tr>
 
     
@@ -5249,7 +5369,7 @@ console.log(readStrategies(fd))
 <br class="clear">
 
 <footer>
-    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 4.0.5</a> on Mon Aug 10 2026 21:53:44 GMT+0800 (台北標準時間) using the <a href="https://github.com/clenemt/docdash">docdash</a> theme.
+    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 4.0.5</a> on Wed Aug 12 2026 16:01:18 GMT+0800 (台北標準時間) using the <a href="https://github.com/clenemt/docdash">docdash</a> theme.
 </footer>
 
 <script>prettyPrint();</script>
