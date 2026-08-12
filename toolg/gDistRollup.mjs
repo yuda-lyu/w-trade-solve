@@ -19,10 +19,12 @@ async function rp() {
         globals: {
             path: 'path',
             fs: 'fs',
+            crypto: 'crypto', //genStrategyFileName以md5產生雜湊檔名
         },
         external: [
             'path',
             'fs',
+            'crypto',
         ],
     })
         .catch((err) => {
