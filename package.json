@@ -1,18 +1,18 @@
 {
   "name": "w-trade-solve",
-  "version": "2.0.11",
+  "version": "2.0.12",
   "main": "dist/w-trade-solve.umd.js",
   "dependencies": {
-    "w-data-tdprovide": "^1.0.16",
-    "w-optimization": "^1.0.34",
-    "w-trade-backtest": "^1.1.11",
-    "wsemi": "^1.8.85"
+    "w-data-tdprovide": "^1.0.17",
+    "w-optimization": "^1.0.35",
+    "w-trade-backtest": "^1.1.12",
+    "wsemi": "^1.8.92"
   },
   "devDependencies": {
-    "w-package-tools": "^1.1.15"
+    "w-package-tools": "^1.1.16"
   },
   "scripts": {
-    "test": "mocha \"test/unit-*.test.mjs\" --parallel --timeout 60000",
+    "test": "mocha --parallel \"test/*.test.mjs\" --timeout 180000",
     "deploy": "gh-pages -d docs"
   },
   "repository": {
