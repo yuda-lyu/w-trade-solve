@@ -1,12 +1,12 @@
 {
   "name": "w-trade-solve",
-  "version": "2.0.19",
+  "version": "2.0.20",
   "main": "dist/w-trade-solve.umd.js",
   "dependencies": {
-    "w-data-tdprovide": "^1.0.25",
-    "w-optimization": "^1.0.43",
-    "w-trade-backtest": "^1.1.20",
-    "wsemi": "^1.9.25"
+    "w-data-tdprovide": "^1.0.26",
+    "w-optimization": "^1.0.45",
+    "w-trade-backtest": "^1.1.21",
+    "wsemi": "^1.9.36"
   },
   "devDependencies": {
     "w-package-tools": "^1.1.21"
