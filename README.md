@@ -135,3 +135,31 @@ test()
 
 
 ```
+
+### 研究用本金與基礎單位(`opt.uIni`、`opt.unit`)
+`estimKeys`(及經 `opt` 原樣傳遞之 `estimPicks`／`estimComps`／`estimFinder`)可另給:
+
+| 選項 | 形狀 | 行為 |
+|---|---|---|
+| `uIni` | 有效正數(數字或數字字串),預設 1000 | 通過檢測即轉為數值,寫入策略之 `settings.uIni`(研究用本金;只是夠大之名目值,績效以等效年化計).給予而非有效正數即 throw `invalid opt.uIni: must be a positive number` |
+| `unit` | 一般物件 `{ rule, buffer, units }`,預設 `null` | 下單之基礎單位 = 交易所之最小可下單數量(`w-trade-backtest` ≥ 1.1.40 之 `settings.unit`;`rule = { stepSize, minQty, minNotional }`,各為有效數字或數字字串且大於 0,可另帶查得時刻與來源等記錄欄,原樣落地).通過檢測後複製,`rule` 三欄、`buffer`、`units` 之數字字串轉為數值(`units` 為整數),`buffer`、`units` 為 `null` 或未給時補 0.1 與 1(不寫入 `null`),寫入策略之 `settings.unit`(每個策略各一份副本),回測依此定每單名義(不讀 `uTrade`).無效即 throw(訊息以 `invalid opt.unit` 起頭、不含輸入值),於載入數據前.給予時才動態載入 `w-trade-backtest/src/buildBaseUnitNotional.mjs` 並以之檢測(與回測各路徑檢測 `settings.unit` 者同一函數);該檔不存在或無預設匯出之函數時 throw `opt.unit requires w-trade-backtest >= 1.1.40 (src/buildBaseUnitNotional.mjs)…`;未給時不載入 |
+
+- 未給 `uIni` 與 `unit`(或為 `null`)時,策略之 `settings` 與求解行為逐位不變(`{ uIni: 1000, uTrade: 1, rTakeProfit, rStopLoss, rFee: 0.0005 }`).
+- 數值收數字或數字字串,通過檢測即轉為數值後使用與落地:策略檔內為數值,不是呼叫端給的原字串;轉換前後以 `buildBaseUnitNotional(...).key` 比對一致(不偏離回測套件之解析).
+- 給 `unit` 時 `settings` 為既有五鍵後接 `unit`;`uTrade` 仍記 1 但回測不讀.
+- 給 `unit` 時,自訂評估核心(`funRunStrategyCustom`／`funRunStrategyCustomBeforeSave`)須依 `strategy.settings.unit` 計每單名義(例:`buildStrategyFastSession` 之 `evaluate` 原樣傳入 `settings`),否則策略檔所記之 `unit` 與摘要不一致.
+- `unit` 之檢測以價格 1 試算一次(步長格數超過安全整數、或數量與名義超出雙精度範圍即拋錯);實際價位遠低於 1 且步長極小(格數過大)、或遠高於 1 而名義超出雙精度範圍者,於回測時才拋錯.
+- **單一策略不設持倉門檻**:最大持倉名義(`summary.uTradeAllMax`;給 `unit` 時為實際名義,完整摘要另有同時持倉筆數 `numTradeAllMax`)是否超過 `uIni` 不檢、不剔除,只隨摘要落地;入庫三門檻與適應函數不變(皆與本金之大小無關).持倉組合是否超過本金由挑選端判定,不在本套件.
+- 檔名只依幣種、週期、指標組成與交易次數級距;`unit` 只改每單名義、不改進場與交易次數,故同一策略之檔名不變.
+- **新舊口徑混存**:同 tkid 已有策略時,若既有策略檔之 `settings.unit` 與本次不同(一方有一方無,或交易規則三欄、緩衝、單位數不同;查得時刻與來源不計,數字字串與數字之同值視為相同),不以等效年化比較,以本次口徑覆寫,並於 `useShowLog` 為 `true` 時於日誌記一行警告(不帶值);口徑相同者照舊以等效年化比較.
+- `useShowLog` 之日誌:未給 `unit` 時「每次下單金額」為 `uTrade`;給 `unit` 時各單名義依基礎單位而異,改顯示「最大持倉名義(基礎單位)」(摘要之 `uTradeAllMax`,摘要缺此欄時為空字串).
+- 測試(以模組解析鉤子模擬回測套件缺檔)需 Node ≥ 20.6(或 18.19)之 `module.register`;不支援之版本略過該案並印出原因.
+
+```js
+let m = await wts.estimKeys(ott, name, symbol, interval, fdOhlc, fdParam, timeStart, timeEnd, 'long', keys, fdData, {
+    uIni: 10000, //研究用本金
+    unit: { rule: { stepSize: 0.001, minQty: 0.001, minNotional: 20, asOf: '2026-01-01T00:00:00', source: 'exchangeInfo' }, buffer: 0.1, units: 1 }, //交易規則之數值為例
+})
+```
+
+規則與測試表見 `sgud/rule/rulebook.md`.

@@ -13,7 +13,7 @@ import calcLevelNumTrade from './calcLevelNumTrade.mjs'
  * 存檔端可直接組出檔名以fsIsFile查詢既有策略(O(1))，不需列舉全庫，且更新為原地覆寫，結構上不會出現同tkid多檔
  * 因genTid會剔除`${coin}_`與`${interval}_`樣式，不同幣種或週期之同組keys會得到相同tid，故hash輸入需含coin與interval以避免跨幣種/跨週期碰撞
  * 採定長雜湊係因NTFS單一檔名段上限為255字元(UTF-16計，LongPathsEnabled無法放寬)，keys個數多時舊式`${tid} ⊙ ...`檔名會超限
- * settings目前未參與檔名組成
+ * settings目前未參與檔名組成(含uIni與基礎單位選項unit；給unit只改每單名義，不改進場與交易次數，故同一策略之檔名不變)
  *
  * Unit Test: {@link https://github.com/yuda-lyu/w-trade-solve/blob/master/test/unit-genStrategyFileName.test.mjs Github}
  * @function

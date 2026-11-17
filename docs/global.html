@@ -1844,6 +1844,11 @@ await estimFinder(ott, 'btc', 'BTCUSDT', '4hr', './data/ohlc', './data/param', '
 以w-optimization之最佳化函數求解，由opt.methodOml指定演算法，各次計算皆以w-trade-backtest之runStrategy回測並經calcFitness計算適應值；亦可由opt.funRunStrategyCustom注入自訂評估核心加速求解(如以w-trade-backtest之buildStrategyFastSession預算first-touch表與因子對位序列)，注入僅回傳精簡欄位之核心時可配合opt.useRunStrategyBeforeSave於存檔前重跑完整回測，使落地summary維持完整欄位口徑；存檔前重跑後檔內numTrade、levelNumTrade、tkid、fitness與檔名皆由重跑之summary重新衍生，確保檔名與檔案內容同源一致；重算檔名與原檔名不同(評估核心與重跑結果跨級距)時，對新檔名重做存在檢查、身分驗證與優劣比較，新檔名已有更佳者則放棄本次寫入
 各次計算結果若同時滿足交易次數、勝率與最終等效年化盈虧三門檻，則以genStrategyFileName產生檔名存入fdData；檔名為tkid(tid+交易次數級距)之純函數，故直接組出檔名查詢既有策略(O(1)，不列舉全庫)，同tkid已有策略時僅於最終等效年化盈虧更佳時原地覆寫，故同tkid恆僅一檔；覆寫前驗證舊檔內tkid、name與interval與本次一致，不一致代表雜湊碰撞，直接throw以避免無聲覆寫
 策略檔內容除策略本體(tid、sid、name、symbol、interval、keyOhlc、mode、conds、settings)與summary、fitness外，另落地tkid、numTrade、levelNumTrade、keys與solve區塊(timeStart、timeEnd、methodOml、thNumTrade、thRWin、thREquivalentCumuProfitOrLossFinalNormYear、thsTp、thsSl、timeSolved)，使識別與求解條件欄位自足，不依賴檔名
+策略之settings為{uIni,uTrade,rTakeProfit,rStopLoss,rFee}，uIni取opt.uIni(未給為1000)、uTrade恆為1、rFee恆為0.0005；給opt.unit時另含unit(補齊buffer與units，交易規則之其他欄位如查得時刻與來源原樣保留)，回測依基礎單位定每單名義(不讀uTrade)，交易規則與緩衝隨策略檔落地；未給opt.uIni與opt.unit時settings與既有逐位相同
+opt.uIni與opt.unit之數值收數字或數字字串，檢測通過即轉為數值後使用與落地(檢測之值即使用之值)，策略檔內為數值而非原字串；無效即throw，訊息為<code>invalid opt.&lt;名稱&gt;: must be &lt;種類&gt;</code>且不含輸入值，於載入數據、建立fdData之前
+單一策略不設持倉門檻：最大持倉名義(summary.uTradeAllMax，給opt.unit時為實際名義)是否超過uIni不檢、不剔除，只隨summary落地；入庫條件與適應值不變
+同tkid已有策略時，若既有策略檔之settings.unit與本次不同(一方有一方無，或交易規則三欄、緩衝、單位數不同；查得時刻與來源等記錄欄不計)，視為新舊口徑混存，不以等效年化比較而以本次口徑覆寫，並於opt.useShowLog為true時於日誌記一行警告(不帶值)；口徑相同者照舊以等效年化比較
+opt.useShowLog為true時，日誌中之「每次下單金額」於未給opt.unit時為uTrade，給opt.unit時各單名義依基礎單位而異，改顯示summary可得之最大持倉名義(summary.uTradeAllMax)
 opt除下列各欄位外，其餘欄位皆原樣傳遞至所選之最佳化函數，兩者欄位名稱無重疊，故可一併給予求解設定
 各演算法共通之設定為NContiguous(最佳解連續未更新次數上限，預設100)、NRepeat、NCore、ModeOutLimit、UseRepeat、UseImmigration、LocalSearchMethod與funGetBetter、funGenerationBefore、funGenerationAfter三接口；族群數與迴圈數之欄位名稱各演算法不同，RGA與DE為Np與Ng、PSO為Np與Nl、HS為Ns與Ni、ACO為Na與Nl；另各演算法有其專屬超參數，如PSO之psoC1Start、RGA之rgaCrossover、DE之deF、HS之hsHMCR與ACO之acoAlphaStart等
 預設之求解量甚大(單一key約需1萬7千次回測)，僅需快速試算時可調小族群數與NContiguous
@@ -1854,7 +1859,7 @@ name、symbol、interval、fdOhlc、fdParam、timeStart、timeEnd、keys、fdDat
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="estimKeys.mjs.html">estimKeys.mjs</a>, <a href="estimKeys.mjs.html#line103">line 103</a>
+        <a href="estimKeys.mjs.html">estimKeys.mjs</a>, <a href="estimKeys.mjs.html#line143">line 143</a>
     </li></ul></dd>
     
 
@@ -1925,7 +1930,17 @@ let mQuick = await estimKeys(ott, 'btc', 'BTCUSDT', '4hr', './data/ohlc', './dat
 console.log(mQuick.stopMode)
 // => 'stop by iContinue[5] >= NContiguous[5]'
 console.log(mQuick.stopExecutions) //核心分析次數, 較預設設定大幅減少, 因求解為隨機故每次不同
-// => 357</code></pre>
+// => 357
+
+//依交易所之最小可下單數量定每單名義(基礎單位), 研究用本金10000; 交易規則可另記查得時刻與來源(回測不讀, 原樣落地); 數值亦可給數字字串(落地時轉為數值)
+let mUnit = await estimKeys(ott, 'btc', 'BTCUSDT', '4hr', './data/ohlc', './data/param', '2022-07-01T00:00:00', '2025-04-08T00:00:00', 'long', keys, './data/strategy', {
+    thsTp: [1, 2, 3],
+    thsSl: [1, 2, 3],
+    uIni: 10000,
+    unit: { rule: { stepSize: 0.001, minQty: 0.001, minNotional: 50, asOf: '2026-01-01T00:00:00', source: 'exchangeInfo' }, buffer: 0.1, units: 1 },
+})
+console.log(mUnit.stopMode) //策略檔之settings另含uIni 10000與unit(補齊buffer與units), summary之uTradeAllMax為實際名義
+// => 'stop by iContinue[100] >= NContiguous[100]'</code></pre>
 
 
 
@@ -2691,7 +2706,7 @@ console.log(mQuick.stopExecutions) //核心分析次數, 較預設設定大幅�
                 </td>
             
 
-            <td class="description last"><p>輸入自訂回測評估async函數，傳入{ott,strategy,funGetSeries}物件，須回傳{summary}且summary至少含numTrade、rWin、uEquityFinal與rEquivalentCumuProfitOrLossFinalNormYear四欄，各欄語義須與runStrategy等值，回傳之準確性由注入端負責；未給時採runStrategy，預設null</p></td>
+            <td class="description last"><p>輸入自訂回測評估async函數，傳入{ott,strategy,funGetSeries}物件，須回傳{summary}且summary至少含numTrade、rWin、uEquityFinal與rEquivalentCumuProfitOrLossFinalNormYear四欄，各欄語義須與runStrategy等值(給opt.unit時須依strategy.settings.unit計每單名義，否則策略檔所記之unit與摘要不一致)，回傳之準確性由注入端負責；未給時採runStrategy，預設null</p></td>
         </tr>
 
     
@@ -2812,6 +2827,89 @@ console.log(mQuick.stopExecutions) //核心分析次數, 較預設設定大幅�
             
 
             <td class="description last"><p>輸入是否顯示求解過程log布林值，預設false</p></td>
+        </tr>
+
+    
+
+        <tr>
+            
+                <td class="name"><code>uIni</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type">Number</span>
+|
+
+<span class="param-type">String</span>
+
+
+
+            
+            </td>
+
+            
+                <td class="attributes">
+                
+                    &lt;optional><br>
+                
+
+                
+
+                
+                </td>
+            
+
+            
+                <td class="default">
+                
+                    <code>1000</code>
+                
+                </td>
+            
+
+            <td class="description last"><p>輸入研究用本金之有效正數(數字或數字字串，通過即轉為數值)，寫入策略之settings.uIni(只是夠大之名目值，績效以等效年化計)，給予而非有效正數時throw(訊息為<code>invalid opt.uIni: must be a positive number</code>)，null或未給為1000，預設1000</p></td>
+        </tr>
+
+    
+
+        <tr>
+            
+                <td class="name"><code>unit</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type">Object</span>
+
+
+
+            
+            </td>
+
+            
+                <td class="attributes">
+                
+                    &lt;optional><br>
+                
+
+                
+
+                
+                </td>
+            
+
+            
+                <td class="default">
+                
+                    <code>null</code>
+                
+                </td>
+            
+
+            <td class="description last"><p>輸入基礎單位選項一般物件{rule,buffer,units}(rule為交易規則{stepSize,minQty,minNotional}，各為有效數字或數字字串且大於0，可另含查得時刻與來源等記錄欄；buffer為非負數，null或未給為0.1；units為正整數，null或未給為1；介面同w-trade-backtest之settings.unit)，給予時才動態載入w-trade-backtest(&gt;=1.1.40)之buildBaseUnitNotional(檔不存在或無預設匯出之函數時throw <code>opt.unit requires w-trade-backtest &gt;= 1.1.40 (src/buildBaseUnitNotional.mjs)…</code>；未給時不載入)，以之檢測選項並以價格1試算一次(步長格數超過安全整數或數量與名義超出雙精度範圍即throw；實際價位遠低於1且步長極小、或遠高於1而名義超出雙精度範圍者，於回測時才拋錯)，通過後複製並將rule三欄、buffer、units之數字字串轉為數值(units為整數)、補齊buffer與units(不寫入null)，寫入策略之settings.unit(每個策略各一份)，無效時throw(訊息以<code>invalid opt.unit</code>起頭、不含輸入值)，null或未給為不使用基礎單位，預設null</p></td>
         </tr>
 
     
@@ -3875,7 +3973,7 @@ tid由genTid以coin、interval、mode與keys產生，levelNumTrade由calcLevelNu
 存檔端可直接組出檔名以fsIsFile查詢既有策略(O(1))，不需列舉全庫，且更新為原地覆寫，結構上不會出現同tkid多檔
 因genTid會剔除<code>${coin}_</code>與<code>${interval}_</code>樣式，不同幣種或週期之同組keys會得到相同tid，故hash輸入需含coin與interval以避免跨幣種/跨週期碰撞
 採定長雜湊係因NTFS單一檔名段上限為255字元(UTF-16計，LongPathsEnabled無法放寬)，keys個數多時舊式<code>${tid} ⊙ ...</code>檔名會超限
-settings目前未參與檔名組成</p>
+settings目前未參與檔名組成(含uIni與基礎單位選項unit；給unit只改每單名義，不改進場與交易次數，故同一策略之檔名不變)</p>
 <p>Unit Test: <a href="https://github.com/yuda-lyu/w-trade-solve/blob/master/test/unit-genStrategyFileName.test.mjs">Github</a></p></li></ul></dd>
     
 
@@ -5369,7 +5467,7 @@ console.log(readStrategies(fd))
 <br class="clear">
 
 <footer>
-    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 4.0.5</a> on Wed Nov 18 2026 03:02:42 GMT+0800 (台北標準時間) using the <a href="https://github.com/clenemt/docdash">docdash</a> theme.
+    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 4.0.5</a> on Wed Nov 18 2026 07:20:15 GMT+0800 (台北標準時間) using the <a href="https://github.com/clenemt/docdash">docdash</a> theme.
 </footer>
 
 <script>prettyPrint();</script>

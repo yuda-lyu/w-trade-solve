@@ -1,9 +1,11 @@
 import path from 'path'
+import cloneDeep from 'lodash-es/cloneDeep.js'
 import each from 'lodash-es/each.js'
 import get from 'lodash-es/get.js'
 import map from 'lodash-es/map.js'
 import round from 'lodash-es/round.js'
 import size from 'lodash-es/size.js'
+import cdbl from 'wsemi/src/cdbl.mjs'
 import cint from 'wsemi/src/cint.mjs'
 import dig from 'wsemi/src/dig.mjs'
 import fsCreateFolder from 'wsemi/src/fsCreateFolder.mjs'
@@ -12,10 +14,12 @@ import fsIsFolder from 'wsemi/src/fsIsFolder.mjs'
 import fsReadJson from 'wsemi/src/fsReadJson.mjs'
 import fsWriteJson from 'wsemi/src/fsWriteJson.mjs'
 import isearr from 'wsemi/src/isearr.mjs'
+import isenum from 'wsemi/src/isenum.mjs'
 import isestr from 'wsemi/src/isestr.mjs'
 import isnum from 'wsemi/src/isnum.mjs'
 import isbol from 'wsemi/src/isbol.mjs'
 import isfun from 'wsemi/src/isfun.mjs'
+import isobj from 'wsemi/src/isobj.mjs'
 import rang from 'wsemi/src/rang.mjs'
 import wround from 'wsemi/src/round.mjs'
 import omlRGA from 'w-optimization/src/omlRGA.mjs'
@@ -33,6 +37,25 @@ import calcFitness from './calcFitness.mjs'
 import genStrategyFileName from './genStrategyFileName.mjs'
 
 
+//loadBuildBaseUnitNotional, 動態載入w-trade-backtest之buildBaseUnitNotional(內部用, 不入文件): 只在給opt.unit時才載入, 使未給opt.unit者不依賴該檔(下游裝到不含該檔之舊版w-trade-backtest時, 本套件與未用新選項者仍可載入);
+//  載入失敗或預設匯出非函數時throw明確之錯誤(不報成選項無效); 訊息不帶原生錯誤之訊息與路徑, 只帶其錯誤碼
+let loadBuildBaseUnitNotional = async () => {
+    let fun = null
+    try {
+        fun = (await import('w-trade-backtest/src/buildBaseUnitNotional.mjs')).default
+    }
+    catch (err) {
+        let code = get(err, 'code', '')
+        let msgCode = isestr(code) && /^[A-Z][A-Z0-9_]*$/.test(code) ? `: ${code}` : ''
+        throw new Error(`opt.unit requires w-trade-backtest >= 1.1.40 (src/buildBaseUnitNotional.mjs)${msgCode}`)
+    }
+    if (!isfun(fun)) {
+        throw new Error(`opt.unit requires w-trade-backtest >= 1.1.40 (src/buildBaseUnitNotional.mjs has no default export function)`)
+    }
+    return fun
+}
+
+
 /**
  * 針對指定keys率定各key之門檻與止盈止損，求解最佳策略
  *
@@ -41,6 +64,11 @@ import genStrategyFileName from './genStrategyFileName.mjs'
  * 以w-optimization之最佳化函數求解，由opt.methodOml指定演算法，各次計算皆以w-trade-backtest之runStrategy回測並經calcFitness計算適應值；亦可由opt.funRunStrategyCustom注入自訂評估核心加速求解(如以w-trade-backtest之buildStrategyFastSession預算first-touch表與因子對位序列)，注入僅回傳精簡欄位之核心時可配合opt.useRunStrategyBeforeSave於存檔前重跑完整回測，使落地summary維持完整欄位口徑；存檔前重跑後檔內numTrade、levelNumTrade、tkid、fitness與檔名皆由重跑之summary重新衍生，確保檔名與檔案內容同源一致；重算檔名與原檔名不同(評估核心與重跑結果跨級距)時，對新檔名重做存在檢查、身分驗證與優劣比較，新檔名已有更佳者則放棄本次寫入
  * 各次計算結果若同時滿足交易次數、勝率與最終等效年化盈虧三門檻，則以genStrategyFileName產生檔名存入fdData；檔名為tkid(tid+交易次數級距)之純函數，故直接組出檔名查詢既有策略(O(1)，不列舉全庫)，同tkid已有策略時僅於最終等效年化盈虧更佳時原地覆寫，故同tkid恆僅一檔；覆寫前驗證舊檔內tkid、name與interval與本次一致，不一致代表雜湊碰撞，直接throw以避免無聲覆寫
  * 策略檔內容除策略本體(tid、sid、name、symbol、interval、keyOhlc、mode、conds、settings)與summary、fitness外，另落地tkid、numTrade、levelNumTrade、keys與solve區塊(timeStart、timeEnd、methodOml、thNumTrade、thRWin、thREquivalentCumuProfitOrLossFinalNormYear、thsTp、thsSl、timeSolved)，使識別與求解條件欄位自足，不依賴檔名
+ * 策略之settings為{uIni,uTrade,rTakeProfit,rStopLoss,rFee}，uIni取opt.uIni(未給為1000)、uTrade恆為1、rFee恆為0.0005；給opt.unit時另含unit(補齊buffer與units，交易規則之其他欄位如查得時刻與來源原樣保留)，回測依基礎單位定每單名義(不讀uTrade)，交易規則與緩衝隨策略檔落地；未給opt.uIni與opt.unit時settings與既有逐位相同
+ * opt.uIni與opt.unit之數值收數字或數字字串，檢測通過即轉為數值後使用與落地(檢測之值即使用之值)，策略檔內為數值而非原字串；無效即throw，訊息為`invalid opt.<名稱>: must be <種類>`且不含輸入值，於載入數據、建立fdData之前
+ * 單一策略不設持倉門檻：最大持倉名義(summary.uTradeAllMax，給opt.unit時為實際名義)是否超過uIni不檢、不剔除，只隨summary落地；入庫條件與適應值不變
+ * 同tkid已有策略時，若既有策略檔之settings.unit與本次不同(一方有一方無，或交易規則三欄、緩衝、單位數不同；查得時刻與來源等記錄欄不計)，視為新舊口徑混存，不以等效年化比較而以本次口徑覆寫，並於opt.useShowLog為true時於日誌記一行警告(不帶值)；口徑相同者照舊以等效年化比較
+ * opt.useShowLog為true時，日誌中之「每次下單金額」於未給opt.unit時為uTrade，給opt.unit時各單名義依基礎單位而異，改顯示summary可得之最大持倉名義(summary.uTradeAllMax)
  * opt除下列各欄位外，其餘欄位皆原樣傳遞至所選之最佳化函數，兩者欄位名稱無重疊，故可一併給予求解設定
  * 各演算法共通之設定為NContiguous(最佳解連續未更新次數上限，預設100)、NRepeat、NCore、ModeOutLimit、UseRepeat、UseImmigration、LocalSearchMethod與funGetBetter、funGenerationBefore、funGenerationAfter三接口；族群數與迴圈數之欄位名稱各演算法不同，RGA與DE為Np與Ng、PSO為Np與Nl、HS為Ns與Ni、ACO為Na與Nl；另各演算法有其專屬超參數，如PSO之psoC1Start、RGA之rgaCrossover、DE之deF、HS之hsHMCR與ACO之acoAlphaStart等
  * 預設之求解量甚大(單一key約需1萬7千次回測)，僅需快速試算時可調小族群數與NContiguous
@@ -66,10 +94,12 @@ import genStrategyFileName from './genStrategyFileName.mjs'
  * @param {Number} [opt.thNumTrade=1] 輸入策略須儲存之最少交易次數數值，預設1
  * @param {Number} [opt.thRWin=0.5] 輸入策略須儲存之最低勝率比例數值，預設0.5
  * @param {Number} [opt.thREquivalentCumuProfitOrLossFinalNormYear=0.15] 輸入策略須儲存之最低最終等效年化盈虧比例數值，預設0.15
- * @param {Function} [opt.funRunStrategyCustom=null] 輸入自訂回測評估async函數，傳入{ott,strategy,funGetSeries}物件，須回傳{summary}且summary至少含numTrade、rWin、uEquityFinal與rEquivalentCumuProfitOrLossFinalNormYear四欄，各欄語義須與runStrategy等值，回傳之準確性由注入端負責；未給時採runStrategy，預設null
+ * @param {Function} [opt.funRunStrategyCustom=null] 輸入自訂回測評估async函數，傳入{ott,strategy,funGetSeries}物件，須回傳{summary}且summary至少含numTrade、rWin、uEquityFinal與rEquivalentCumuProfitOrLossFinalNormYear四欄，各欄語義須與runStrategy等值(給opt.unit時須依strategy.settings.unit計每單名義，否則策略檔所記之unit與摘要不一致)，回傳之準確性由注入端負責；未給時採runStrategy，預設null
  * @param {Boolean} [opt.useRunStrategyBeforeSave=false] 輸入存檔前是否重跑一次回測並以其summary重新衍生檔案內容與檔名布林值，注入僅回傳精簡欄位之評估核心時應設true以維持策略檔欄位口徑，求解搜索仍全程使用自訂函數不受影響，預設false
  * @param {Function} [opt.funRunStrategyCustomBeforeSave=null] 輸入存檔前重跑用之自訂回測async函數，介面同opt.funRunStrategyCustom，僅於opt.useRunStrategyBeforeSave為true時生效，未給時採runStrategy，預設null
  * @param {Boolean} [opt.useShowLog=false] 輸入是否顯示求解過程log布林值，預設false
+ * @param {Number|String} [opt.uIni=1000] 輸入研究用本金之有效正數(數字或數字字串，通過即轉為數值)，寫入策略之settings.uIni(只是夠大之名目值，績效以等效年化計)，給予而非有效正數時throw(訊息為`invalid opt.uIni: must be a positive number`)，null或未給為1000，預設1000
+ * @param {Object} [opt.unit=null] 輸入基礎單位選項一般物件{rule,buffer,units}(rule為交易規則{stepSize,minQty,minNotional}，各為有效數字或數字字串且大於0，可另含查得時刻與來源等記錄欄；buffer為非負數，null或未給為0.1；units為正整數，null或未給為1；介面同w-trade-backtest之settings.unit)，給予時才動態載入w-trade-backtest(>=1.1.40)之buildBaseUnitNotional(檔不存在或無預設匯出之函數時throw `opt.unit requires w-trade-backtest >= 1.1.40 (src/buildBaseUnitNotional.mjs)…`；未給時不載入)，以之檢測選項並以價格1試算一次(步長格數超過安全整數或數量與名義超出雙精度範圍即throw；實際價位遠低於1且步長極小、或遠高於1而名義超出雙精度範圍者，於回測時才拋錯)，通過後複製並將rule三欄、buffer、units之數字字串轉為數值(units為整數)、補齊buffer與units(不寫入null)，寫入策略之settings.unit(每個策略各一份)，無效時throw(訊息以`invalid opt.unit`起頭、不含輸入值)，null或未給為不使用基礎單位，預設null
  * @returns {Promise} 回傳Promise，resolve為求解結果物件，含bestSolution(最佳解，內有ps設計變數陣列與fitness適應值)、stopMode(觸發停止之機制字串)、stopIteration(停止時之迴圈數)與stopExecutions(停止時之核心分析次數)等欄位
  * @example
  *
@@ -98,6 +128,16 @@ import genStrategyFileName from './genStrategyFileName.mjs'
  * // => 'stop by iContinue[5] >= NContiguous[5]'
  * console.log(mQuick.stopExecutions) //核心分析次數, 較預設設定大幅減少, 因求解為隨機故每次不同
  * // => 357
+ *
+ * //依交易所之最小可下單數量定每單名義(基礎單位), 研究用本金10000; 交易規則可另記查得時刻與來源(回測不讀, 原樣落地); 數值亦可給數字字串(落地時轉為數值)
+ * let mUnit = await estimKeys(ott, 'btc', 'BTCUSDT', '4hr', './data/ohlc', './data/param', '2022-07-01T00:00:00', '2025-04-08T00:00:00', 'long', keys, './data/strategy', {
+ *     thsTp: [1, 2, 3],
+ *     thsSl: [1, 2, 3],
+ *     uIni: 10000,
+ *     unit: { rule: { stepSize: 0.001, minQty: 0.001, minNotional: 50, asOf: '2026-01-01T00:00:00', source: 'exchangeInfo' }, buffer: 0.1, units: 1 },
+ * })
+ * console.log(mUnit.stopMode) //策略檔之settings另含uIni 10000與unit(補齊buffer與units), summary之uTradeAllMax為實際名義
+ * // => 'stop by iContinue[100] >= NContiguous[100]'
  *
  */
 let estimKeys = async (ott, name, symbol, interval, fdOhlc, fdParam, timeStart, timeEnd, mode, keys, fdData, opt = {}) => {
@@ -164,6 +204,38 @@ let estimKeys = async (ott, name, symbol, interval, fdOhlc, fdParam, timeStart, 
     }
     let funRunStrategyCustomBeforeSave = get(opt, 'funRunStrategyCustomBeforeSave', null)
     let useShowLog = get(opt, 'useShowLog', null)
+
+    //uIni, 研究用本金(寫入策略之settings.uIni), 未給時為1000(同既有); 給予者須為有效正數(數字或數字字串), 通過即轉為數值使用(檢測之值即使用之值), 無效即throw(不改用預設, 否則策略檔所記之本金與呼叫端之意圖不符而無人察覺), 訊息不含輸入值
+    let uIni = get(opt, 'uIni', null)
+    if (uIni === null) {
+        uIni = 1000
+    }
+    else {
+        if (!isenum(uIni, { gt: 0 })) {
+            throw new Error(`invalid opt.uIni: must be a positive number`)
+        }
+        uIni = cdbl(uIni)
+    }
+
+    //unit, 基礎單位選項{rule,buffer,units}(寫入策略之settings.unit, 由w-trade-backtest依基礎單位定每單名義), 未給時為null(同既有, 每單名義為uTrade)
+    //  給予時才動態載入w-trade-backtest之buildBaseUnitNotional(未給unit之路徑不依賴該檔), 先複製(各欄位僅讀取一次, 其後檢測與轉換皆用此副本, 檢測之值即使用之值),
+    //  以之檢測(與回測各路徑檢測settings.unit者同一函數; 無效即throw, 於載入數據之前), 再將rule三欄、buffer、units轉為數值(與回測套件之轉型同一函數: cdbl、cint)並補齊buffer與units(null或未給時補預設, 不寫入null), 使策略檔記錄實際採用之數值
+    let unit = get(opt, 'unit', null)
+    let unitKey = null //基礎單位選項之識別字串(buildBaseUnitNotional之key, 同key即同口徑), 供同tkid覆寫前比對新舊口徑
+    let buildBaseUnitNotional = null
+    if (unit !== null) {
+        if (!isobj(unit)) {
+            throw new Error(`invalid opt.unit: must be an object`)
+        }
+        buildBaseUnitNotional = await loadBuildBaseUnitNotional()
+        unit = cloneDeep(unit)
+        unitKey = buildBaseUnitNotional(unit, 'opt.unit').key //須為一般物件、rule三欄與buffer、units有效(數字或數字字串), 並以價格1試算一次; 無效時throw(訊息以`invalid opt.unit`起頭, 不含輸入值)
+        unit.rule.stepSize = cdbl(unit.rule.stepSize)
+        unit.rule.minQty = cdbl(unit.rule.minQty)
+        unit.rule.minNotional = cdbl(unit.rule.minNotional)
+        unit.buffer = (unit.buffer === undefined || unit.buffer === null) ? 0.1 : cdbl(unit.buffer)
+        unit.units = (unit.units === undefined || unit.units === null) ? 1 : cint(unit.units)
+    }
 
     //provideData
     let provideData = dataProvide(fdOhlc, fdParam)
@@ -265,8 +337,26 @@ let estimKeys = async (ott, name, symbol, interval, fdOhlc, fdParam, timeStart, 
 
     }
 
+    //isSameUnit, 既有策略檔之settings.unit是否與本次為同一口徑(內部用): 皆無即同; 一方有一方無即不同;
+    //  皆有時以buildBaseUnitNotional之key比較(轉型後之交易規則三欄、緩衝與單位數, 同key即同口徑; 查得時刻與來源等記錄欄不計, 數字字串與數字之同值為同), 既有者無法解析(內容無效)視為不同
+    let isSameUnit = (unitOld) => {
+        if (unitOld === null) {
+            return unitKey === null
+        }
+        if (unitKey === null) {
+            return false
+        }
+        try {
+            return buildBaseUnitNotional(unitOld, 'unit').key === unitKey
+        }
+        catch (err) {
+            return false
+        }
+    }
+
     //checkSavable, 檢查指定檔名處是否可寫入策略: 無檔案或舊檔非合法json回傳true(直接寫入);
     //  舊檔身分(tkid/name/interval)與本次不一致代表雜湊碰撞, 直接throw以避免無聲覆寫;
+    //  舊檔與本次之基礎單位口徑不同(新舊口徑混存, 等效年化不可比較)回傳true(以本次口徑覆寫並於日誌警告);
     //  新等效年化盈虧較佳時回傳true(原地覆寫), 否則回傳false(保留既有較佳者)
     let checkSavable = (fpStrategy, fnStrategy, tkid, rEquivalentCumuProfitOrLossFinalNormYearNew) => {
 
@@ -290,6 +380,16 @@ let estimKeys = async (ott, name, symbol, interval, fdOhlc, fdParam, timeStart, 
         let intervalOld = get(dataOld, 'interval', '')
         if ((isestr(tkidOld) && tkidOld !== tkid) || (isestr(nameOld) && nameOld !== name) || (isestr(intervalOld) && intervalOld !== interval)) {
             throw new Error(`hash collision: fnStrategy[${fnStrategy}], tkidOld[${tkidOld}] vs tkid[${tkid}], nameOld[${nameOld}] vs name[${name}], intervalOld[${intervalOld}] vs interval[${interval}]`)
+        }
+
+        //check, 新舊基礎單位口徑不同(一方有一方無, 或交易規則、緩衝、單位數不同)則等效年化不可比較, 以本次口徑覆寫, 日誌警告(不帶值, 只帶檔名)
+        if (!isSameUnit(get(dataOld, 'settings.unit', null))) {
+
+            if (useShowLog) {
+                console.log(`警告: 既有策略與本次之基礎單位口徑不同, 以本次口徑覆寫(不比較等效年化)`, fnStrategy)
+            }
+
+            return true
         }
 
         //rEquivalentCumuProfitOrLossFinalNormYearOld
@@ -387,13 +487,16 @@ let estimKeys = async (ott, name, symbol, interval, fdOhlc, fdParam, timeStart, 
             conds,
 
             settings: {
-                uIni: 1000, //初始資金(USDT)
-                uTrade, //每次下單金額(USDT)
+                uIni, //初始資金(USDT), 研究用本金, 未給opt.uIni時為1000
+                uTrade, //每次下單金額(USDT), 給unit時回測不讀取
                 rTakeProfit, //止盈
                 rStopLoss, //止損
                 rFee: 0.0005, //手續費
             },
 
+        }
+        if (unit !== null) {
+            strategy.settings.unit = cloneDeep(unit) //基礎單位選項(含交易規則與緩衝), 隨策略檔落地; 每個策略各一份, 評估核心就地改動不影響其他候選
         }
 
         //runStrategy
@@ -459,11 +562,19 @@ let estimKeys = async (ott, name, symbol, interval, fdOhlc, fdParam, timeStart, 
         let res = genRes(r)
         //  console.log(ifun, res)
 
+        //kTrade, vTrade, 日誌之下單金額欄: 未給unit時為每次下單金額(uTrade), 給unit時各單名義依基礎單位而異(不讀uTrade), 改顯示summary可得之最大持倉名義(缺時為空字串)
+        let kTrade = '每次下單金額'
+        let vTrade = res.settings.uTrade
+        if (unit !== null) {
+            kTrade = '最大持倉名義(基礎單位)'
+            vTrade = get(res.summary, 'uTradeAllMax', '')
+        }
+
         //resBrief
         let resBrief = {
 
             '方向': res.mode,
-            '每次下單金額': res.settings.uTrade,
+            [kTrade]: vTrade,
             '止盈': dig(res.settings.rTakeProfit * 100, 1) + '%',
             '止損': dig(res.settings.rStopLoss * 100, 1) + '%',
             // '最大持倉金額': res.summary.uTradeAllMax,
