@@ -2,6 +2,7 @@ import path from 'path'
 import cloneDeep from 'lodash-es/cloneDeep.js'
 import each from 'lodash-es/each.js'
 import get from 'lodash-es/get.js'
+import isEqual from 'lodash-es/isEqual.js'
 import map from 'lodash-es/map.js'
 import round from 'lodash-es/round.js'
 import size from 'lodash-es/size.js'
@@ -14,6 +15,7 @@ import fsIsFolder from 'wsemi/src/fsIsFolder.mjs'
 import fsReadJson from 'wsemi/src/fsReadJson.mjs'
 import fsWriteJson from 'wsemi/src/fsWriteJson.mjs'
 import isearr from 'wsemi/src/isearr.mjs'
+import iseint from 'wsemi/src/iseint.mjs'
 import isenum from 'wsemi/src/isenum.mjs'
 import isestr from 'wsemi/src/isestr.mjs'
 import isnum from 'wsemi/src/isnum.mjs'
@@ -29,12 +31,106 @@ import omlPSO from 'w-optimization/src/omlPSO.mjs'
 import omlACO from 'w-optimization/src/omlACO.mjs'
 import dataProvide from 'w-data-tdprovide'
 import runStrategy from 'w-trade-backtest/src/runStrategy.mjs'
+import parseBarTime from 'w-trade-backtest/src/barTime.mjs'
 import genTid from './genTid.mjs'
 import genSid from './genSid.mjs'
 import p2r from './p2r.mjs'
 import calcLevelNumTrade from './calcLevelNumTrade.mjs'
 import calcFitness from './calcFitness.mjs'
 import genStrategyFileName from './genStrategyFileName.mjs'
+import { parseLevelNumTradeBounds, tagLevelNumTrade } from './_levelNumTradeBounds.mjs'
+
+
+//THS_COND_MAX, 條件門檻格點之點數上限(格點記於每個策略檔之solve.thsCond, 故設上限)
+let THS_COND_MAX = 1001
+
+
+//parseThsPct, 止盈止損候選opt.thsTp、opt.thsSl(百分比)之檢測與轉換(內部用, 不入文件)
+//  v為null或undefined回傳null(採預設候選, 同既有); 給予者須為非空陣列, 各元素為有效數字(數字或數字字串, 以isenum判定, cdbl轉為數值), 且除以100取至小數3位(同設計變數還原之取捨: round(v / 100, 3))後須大於0,
+//  即為0、負數、或小於0.05(取捨後為0)者無效(w-trade-backtest之settings.rTakeProfit與settings.rStopLoss須為正數); 止盈止損影響下單之金額與回測結果, 給了而無效即throw、不改用預設(跨套件規格〈輸入參數之檢測機制〉§11);
+//  各元素只讀取一次(檢測之值即使用之值), 回傳轉為數值之新陣列(不改呼叫端之陣列)
+//  無效即throw `invalid ${name}: must be a non-empty array of positive numbers that stay positive after rounding`(不含輸入值)
+let parseThsPct = (v, name) => {
+
+    if (v === null || v === undefined) {
+        return null
+    }
+
+    let msg = `invalid ${name}: must be a non-empty array of positive numbers that stay positive after rounding`
+    if (!Array.isArray(v) || v.length === 0) {
+        throw new Error(msg)
+    }
+
+    let ths = []
+    for (let i = 0; i < v.length; i++) {
+        let th = v[i]
+        if (!isenum(th)) {
+            throw new Error(msg)
+        }
+        th = cdbl(th)
+        if (!(round(th / 100, 3) > 0)) {
+            throw new Error(msg)
+        }
+        ths.push(th)
+    }
+
+    return ths
+}
+
+
+//parseThsCond, 條件門檻格點opt.thsCond之檢測、轉換與編碼(內部用, 不入文件)
+//  v為null或undefined回傳null(採預設格點, 同既有); 給予者須為非空陣列且至多THS_COND_MAX點, 各元素為有效數字(數字或數字字串, 以isenum判定), 轉為數值(cdbl)後須嚴格遞增, 各元素只讀取一次(檢測之值即使用之值)
+//  編碼: 平移量vdir = max(格點絕對值之最大者, 2) * 5(格點落於[-2,2]者與預設同為10), '>'組為各格點+vdir(皆>0)、'<'組為各格點-vdir(皆<0), 兩組各須仍嚴格遞增且為有限數(平移後相鄰格點不可因浮點而合併), 否則視為無效
+//  回傳{ths(轉為數值之新陣列), values(設計變數之可用值, '>'組在前), mapCond(可用值→{sym,th}, th為格點原值, 解碼不經浮點運算故可精確重現)}
+//  無效即throw `invalid opt.thsCond: must be a non-empty array of at most 1001 strictly increasing finite numbers`(不含輸入值)
+let parseThsCond = (v) => {
+
+    if (v === null || v === undefined) {
+        return null
+    }
+
+    let msg = `invalid opt.thsCond: must be a non-empty array of at most ${THS_COND_MAX} strictly increasing finite numbers`
+    if (!Array.isArray(v) || v.length === 0 || v.length > THS_COND_MAX) {
+        throw new Error(msg)
+    }
+
+    //ths
+    let ths = []
+    for (let i = 0; i < v.length; i++) {
+        let th = v[i]
+        if (!isenum(th)) {
+            throw new Error(msg)
+        }
+        th = cdbl(th)
+        ths.push(th)
+    }
+
+    //vdir
+    let thLim = Math.max(Math.abs(ths[0]), Math.abs(ths[ths.length - 1]), 2)
+    let vdir = thLim * 5
+
+    //valuesU, valuesL, 嚴格遞增於平移後之兩組檢查: 平移為單調之運算, 平移後嚴格遞增即原值嚴格遞增(未排序者thLim雖可能取錯, 必於此不通過), 且排除平移後相鄰點合併與溢位;
+    //  原值嚴格遞增且vdir為最大絕對值之5倍(以上), 故'>'組恆>0、'<'組恆<0
+    let valuesU = map(ths, (th) => th + vdir)
+    let valuesL = map(ths, (th) => th - vdir)
+    let isOk = (vs) => vs.every((x, i) => Number.isFinite(x) && (i === 0 || x > vs[i - 1]))
+    if (!isOk(valuesU) || !isOk(valuesL)) {
+        throw new Error(msg)
+    }
+
+    //mapCond
+    let mapCond = new Map()
+    each(ths, (th, i) => {
+        mapCond.set(valuesU[i], { sym: '>', th })
+        mapCond.set(valuesL[i], { sym: '<', th })
+    })
+
+    return {
+        ths,
+        values: [...valuesU, ...valuesL],
+        mapCond,
+    }
+}
 
 
 //loadBuildBaseUnitNotional, 動態載入w-trade-backtest之buildBaseUnitNotional(內部用, 不入文件): 只在給opt.unit時才載入, 使未給opt.unit者不依賴該檔(下游裝到不含該檔之舊版w-trade-backtest時, 本套件與未用新選項者仍可載入);
@@ -56,18 +152,37 @@ let loadBuildBaseUnitNotional = async () => {
 }
 
 
+//timeKeyOf, 策略settings之時間口徑之識別字串(內部用, 不入文件), 供同tkid覆寫前比對新舊口徑:
+//  缺timeBasis(undefined或null)等同'open'; 'open'時不計intervalSec(只給intervalSec不改任何績效數字, 故既有策略與本次只差intervalSec者為同一口徑); 'span'時為`span:${intervalSec}`;
+//  無法解讀者(timeBasis非'open'或'span'、'span'而intervalSec非正整數)回傳null, 必與本次(已檢測)不同
+let timeKeyOf = (settings) => {
+    let tb = get(settings, 'timeBasis', null)
+    if (tb === null || tb === 'open') {
+        return 'open'
+    }
+    if (tb === 'span') {
+        let iv = get(settings, 'intervalSec', null)
+        return iseint(iv, { min: 1 }) ? `span:${cint(iv)}` : null
+    }
+    return null
+}
+
+
 /**
  * 針對指定keys率定各key之門檻與止盈止損，求解最佳策略
  *
  * 設計變數為[止損比例, 止盈比例, ...各key之門檻]，止損與止盈由opt.thsSl與opt.thsTp給予之百分比清單離散取值
  * 各key門檻取值範圍為[-thLim,thLim]切為thLim*20段，並各自平移+vdir與-vdir(vdir=thLim*5)為兩組，使解值恆大於0代表'>'條件、恆小於0代表'<'條件，還原時再扣除平移值，故單一設計變數即同時涵蓋大於與小於兩種條件
+ * 未給opt.thsCond時thLim為2(格點為-2至2、步長0.1共41點，與K線週期及因子尺度無關)，還原之門檻取至小數3位；給opt.thsCond(門檻格點陣列)時改以其為各key共用之格點('>'與'<'兩組相同)，平移量vdir為max(格點絕對值之最大者,2)*5(格點落於[-2,2]者同為10)，每個key之設計變數可用值為格點數之2倍，還原時直接查回格點原值(不經浮點運算，入庫之門檻必為所給格點之一)
  * 以w-optimization之最佳化函數求解，由opt.methodOml指定演算法，各次計算皆以w-trade-backtest之runStrategy回測並經calcFitness計算適應值；亦可由opt.funRunStrategyCustom注入自訂評估核心加速求解(如以w-trade-backtest之buildStrategyFastSession預算first-touch表與因子對位序列)，注入僅回傳精簡欄位之核心時可配合opt.useRunStrategyBeforeSave於存檔前重跑完整回測，使落地summary維持完整欄位口徑；存檔前重跑後檔內numTrade、levelNumTrade、tkid、fitness與檔名皆由重跑之summary重新衍生，確保檔名與檔案內容同源一致；重算檔名與原檔名不同(評估核心與重跑結果跨級距)時，對新檔名重做存在檢查、身分驗證與優劣比較，新檔名已有更佳者則放棄本次寫入
- * 各次計算結果若同時滿足交易次數、勝率與最終等效年化盈虧三門檻，則以genStrategyFileName產生檔名存入fdData；檔名為tkid(tid+交易次數級距)之純函數，故直接組出檔名查詢既有策略(O(1)，不列舉全庫)，同tkid已有策略時僅於最終等效年化盈虧更佳時原地覆寫，故同tkid恆僅一檔；覆寫前驗證舊檔內tkid、name與interval與本次一致，不一致代表雜湊碰撞，直接throw以避免無聲覆寫
- * 策略檔內容除策略本體(tid、sid、name、symbol、interval、keyOhlc、mode、conds、settings)與summary、fitness外，另落地tkid、numTrade、levelNumTrade、keys與solve區塊(timeStart、timeEnd、methodOml、thNumTrade、thRWin、thREquivalentCumuProfitOrLossFinalNormYear、thsTp、thsSl、timeSolved)，使識別與求解條件欄位自足，不依賴檔名
- * 策略之settings為{uIni,uTrade,rTakeProfit,rStopLoss,rFee}，uIni取opt.uIni(未給為1000)、uTrade恆為1、rFee恆為0.0005；給opt.unit時另含unit(補齊buffer與units，交易規則之其他欄位如查得時刻與來源原樣保留)，回測依基礎單位定每單名義(不讀uTrade)，交易規則與緩衝隨策略檔落地；未給opt.uIni與opt.unit時settings與既有逐位相同
- * opt.uIni與opt.unit之數值收數字或數字字串，檢測通過即轉為數值後使用與落地(檢測之值即使用之值)，策略檔內為數值而非原字串；無效即throw，訊息為`invalid opt.<名稱>: must be <種類>`且不含輸入值，於載入數據、建立fdData之前
+ * 各次計算結果若同時滿足交易次數、勝率與最終等效年化盈虧三門檻，則以genStrategyFileName產生檔名存入fdData；檔名為tkid(tid+交易次數級距)之純函數，故直接組出檔名查詢既有策略(O(1)，不列舉全庫)，同tkid已有策略時僅於最終等效年化盈虧更佳時原地覆寫，故同tkid恆僅一檔；覆寫前驗證舊檔內tkid、name、interval與keys(舊檔有keys者)與本次一致，不一致代表雜湊碰撞(tid為keys縮寫而得，縮寫後相同而keys不同者其tkid與檔名皆同)，直接throw以避免無聲覆寫
+ * 交易次數級距未給opt.levelNumTradeBounds時採calcLevelNumTrade之預設級距(與K線週期無關)，tkid為`${tid}:${levelNumTrade}`；給opt.levelNumTradeBounds(各級距之下界)時級距代碼為不大於交易次數之最大下界，tkid為`${tid}:${levelNumTrade}@${下界以逗號串接}`，檔名之雜湊隨之不同，故同一資料夾混用不同級距設定時各自去重、互不覆寫(覆寫前之tkid驗證亦含級距設定)
+ * 策略檔內容除策略本體(tid、sid、name、symbol、interval、keyOhlc、mode、conds、settings)與summary、fitness外，另落地tkid、numTrade、levelNumTrade、keys與solve區塊(timeStart、timeEnd、methodOml、thNumTrade、thRWin、thREquivalentCumuProfitOrLossFinalNormYear、thsTp、thsSl、timeSolved；給opt.thsCond或opt.levelNumTradeBounds時另於thsSl之後記轉為數值之thsCond與levelNumTradeBounds，未給者不記)，使識別與求解條件欄位自足，不依賴檔名
+ * 策略之settings為{uIni,uTrade,rTakeProfit,rStopLoss,rFee}，uIni取opt.uIni(未給為1000)、uTrade恆為1、rFee恆為0.0005；給opt.unit時另含unit(補齊buffer與units，交易規則之其他欄位如查得時刻與來源原樣保留)，回測依基礎單位定每單名義(不讀uTrade)，交易規則與緩衝隨策略檔落地；給opt.intervalSec或opt.timeBasis時再於其後附加有給之鍵(intervalSec、timeBasis，轉換後之值)，回測與重放依之；未給opt.uIni、opt.unit、opt.intervalSec與opt.timeBasis時settings與既有逐位相同
+ * opt.intervalSec(每根K線之秒數)與opt.timeBasis(時間口徑'open'或'span')之名稱與語意同w-trade-backtest之settings.intervalSec、settings.timeBasis：只給intervalSec(或timeBasis為'open')不改任何績效數字；timeBasis為'span'(須同時給intervalSec)時持倉天數與回測天數依實際時點計，等效年化隨之改變，故入庫門檻與適應值亦隨之；給予任一者時以w-trade-backtest(>=1.1.43)之src/barTime.mjs預設匯出parseBarTime檢測(與回測各路徑同一函數，判準與訊息由回測套件定)，寫入settings之值以其回傳之轉型值為準；intervalSec須與K線之實際間距一致(本套件與回測套件皆不檢查)；同一資料夾之所有寫入者須用同一時間口徑(口徑不同即不比優劣而覆寫，見下)
+ * opt.uIni、opt.unit、opt.thsTp、opt.thsSl、opt.thsCond、opt.levelNumTradeBounds與opt.intervalSec之數值收數字或數字字串，檢測通過即轉為數值後使用與落地(檢測之值即使用之值)，策略檔內為數值而非原字串；opt.thNumTrade、opt.thRWin與opt.thREquivalentCumuProfitOrLossFinalNormYear為入庫之篩選門檻，無效時改用預設(不影響下單金額)，其餘各選項給了而無效即throw，訊息為`invalid opt.<名稱>: must be <種類>`且不含輸入值，於載入數據、建立fdData之前(經estimPicks、estimComps、estimFinder呼叫時，指標key之列舉與opt.funFilterKeys*回呼先於此檢測，仍先於建立fdData與寫檔)
  * 單一策略不設持倉門檻：最大持倉名義(summary.uTradeAllMax，給opt.unit時為實際名義)是否超過uIni不檢、不剔除，只隨summary落地；入庫條件與適應值不變
- * 同tkid已有策略時，若既有策略檔之settings.unit與本次不同(一方有一方無，或交易規則三欄、緩衝、單位數不同；查得時刻與來源等記錄欄不計)，視為新舊口徑混存，不以等效年化比較而以本次口徑覆寫，並於opt.useShowLog為true時於日誌記一行警告(不帶值)；口徑相同者照舊以等效年化比較
+ * 同tkid已有策略時，若既有策略檔之settings.unit與本次不同(一方有一方無，或交易規則三欄、緩衝、單位數不同；查得時刻與來源等記錄欄不計)，或時間口徑不同(缺timeBasis等同'open'；'open'時不計intervalSec；'span'與'open'不同，'span'之intervalSec不同亦不同)，視為新舊口徑混存，不以等效年化比較而以本次口徑覆寫，並於opt.useShowLog為true時於日誌記一行警告(不帶值)；口徑相同者照舊以等效年化比較
  * opt.useShowLog為true時，日誌中之「每次下單金額」於未給opt.unit時為uTrade，給opt.unit時各單名義依基礎單位而異，改顯示summary可得之最大持倉名義(summary.uTradeAllMax)
  * opt除下列各欄位外，其餘欄位皆原樣傳遞至所選之最佳化函數，兩者欄位名稱無重疊，故可一併給予求解設定
  * 各演算法共通之設定為NContiguous(最佳解連續未更新次數上限，預設100)、NRepeat、NCore、ModeOutLimit、UseRepeat、UseImmigration、LocalSearchMethod與funGetBetter、funGenerationBefore、funGenerationAfter三接口；族群數與迴圈數之欄位名稱各演算法不同，RGA與DE為Np與Ng、PSO為Np與Nl、HS為Ns與Ni、ACO為Na與Nl；另各演算法有其專屬超參數，如PSO之psoC1Start、RGA之rgaCrossover、DE之deF、HS之hsHMCR與ACO之acoAlphaStart等
@@ -89,8 +204,12 @@ let loadBuildBaseUnitNotional = async () => {
  * @param {String} fdData 輸入儲存策略資料夾字串，不存在時自動建立
  * @param {Object} [opt={}] 輸入設定物件，預設{}，除下列欄位外皆傳遞至所選之最佳化函數，故可另給NContiguous等求解設定
  * @param {String} [opt.methodOml='PSO'] 輸入最佳化演算法字串，可選'RGA'(實數型基因演算法)、'DE'(差分進化法)、'HS'(和聲搜尋法)、'PSO'(粒子群最佳化)與'ACO'(蟻群最佳化)，給予其他值時亦採'PSO'，預設'PSO'
- * @param {Array} [opt.thsTp=[1,2,3,4,5,6,7,8,9,10]] 輸入止盈門檻百分比數值陣列，預設[1,2,3,4,5,6,7,8,9,10]
- * @param {Array} [opt.thsSl=[1,2,3,4,5,6,7,8,9,10]] 輸入止損門檻百分比數值陣列，預設[1,2,3,4,5,6,7,8,9,10]
+ * @param {Array} [opt.thsTp=[1,2,3,4,5,6,7,8,9,10]] 輸入止盈門檻百分比陣列(非空陣列，各元素為正數之數字或數字字串，通過即轉為數值；除以100取至小數3位後須仍大於0，即不得為0、負數或小於0.05)，給予而無效時throw(訊息為`invalid opt.thsTp: must be a non-empty array of positive numbers that stay positive after rounding`，不含輸入值；止盈影響下單之金額與回測結果，不改用預設)，null或未給為預設，預設[1,2,3,4,5,6,7,8,9,10]
+ * @param {Array} [opt.thsSl=[1,2,3,4,5,6,7,8,9,10]] 輸入止損門檻百分比陣列(規則與opt.thsTp相同)，給予而無效時throw(訊息為`invalid opt.thsSl: must be a non-empty array of positive numbers that stay positive after rounding`)，null或未給為預設，預設[1,2,3,4,5,6,7,8,9,10]
+ * @param {Array} [opt.thsCond=null] 輸入各key條件門檻之格點陣列(各元素為有效數字或數字字串，轉為數值後須嚴格遞增；各key與'>'、'<'兩方向共用)，入庫之門檻必為其中之一(原值，不取捨小數位)，至多1001點(記於每個策略檔之solve.thsCond)，給予而無效時throw(訊息為`invalid opt.thsCond: must be a non-empty array of at most 1001 strictly increasing finite numbers`)，null或未給為預設格點(-2至2、步長0.1，還原取至小數3位)，預設null
+ * @param {Array} [opt.levelNumTradeBounds=null] 輸入交易次數各級距之下界陣列(正整數或整數字串，轉為數值後須嚴格遞增，至多101個，記於每個策略檔之tkid與solve.levelNumTradeBounds)，級距代碼為不大於交易次數之最大下界(小於首個下界者為0)，tkid另帶級距設定(`${tid}:${levelNumTrade}@${下界以逗號串接}`)，給予而無效時throw(訊息為`invalid opt.levelNumTradeBounds: must be a non-empty array of at most 101 strictly increasing positive integers`)，null或未給為calcLevelNumTrade之預設級距，預設null
+ * @param {Integer|String} [opt.intervalSec=null] 輸入每根K線之秒數(正整數或整數字串；判準與訊息由w-trade-backtest之parseBarTime決定，寫入其回傳之轉型值；須與K線之實際間距一致，本套件與回測套件皆不檢查)，給予時附加於策略之settings.intervalSec(只給此鍵不改任何績效數字)，null或未給為不附加，預設null
+ * @param {String} [opt.timeBasis=null] 輸入時間口徑字串'open'(以K線開盤時刻計，同既有)或'span'(計入每根K線之時距，須同時給opt.intervalSec)，給予時附加於策略之settings.timeBasis，null或未給為不附加(等同'open')，預設null
  * @param {Number} [opt.thNumTrade=1] 輸入策略須儲存之最少交易次數數值，預設1
  * @param {Number} [opt.thRWin=0.5] 輸入策略須儲存之最低勝率比例數值，預設0.5
  * @param {Number} [opt.thREquivalentCumuProfitOrLossFinalNormYear=0.15] 輸入策略須儲存之最低最終等效年化盈虧比例數值，預設0.15
@@ -99,14 +218,14 @@ let loadBuildBaseUnitNotional = async () => {
  * @param {Function} [opt.funRunStrategyCustomBeforeSave=null] 輸入存檔前重跑用之自訂回測async函數，介面同opt.funRunStrategyCustom，僅於opt.useRunStrategyBeforeSave為true時生效，未給時採runStrategy，預設null
  * @param {Boolean} [opt.useShowLog=false] 輸入是否顯示求解過程log布林值，預設false
  * @param {Number|String} [opt.uIni=1000] 輸入研究用本金之有效正數(數字或數字字串，通過即轉為數值)，寫入策略之settings.uIni(只是夠大之名目值，績效以等效年化計)，給予而非有效正數時throw(訊息為`invalid opt.uIni: must be a positive number`)，null或未給為1000，預設1000
- * @param {Object} [opt.unit=null] 輸入基礎單位選項一般物件{rule,buffer,units}(rule為交易規則{stepSize,minQty,minNotional}，各為有效數字或數字字串且大於0，可另含查得時刻與來源等記錄欄；buffer為非負數，null或未給為0.1；units為正整數，null或未給為1；介面同w-trade-backtest之settings.unit)，給予時才動態載入w-trade-backtest(>=1.1.40)之buildBaseUnitNotional(檔不存在或無預設匯出之函數時throw `opt.unit requires w-trade-backtest >= 1.1.40 (src/buildBaseUnitNotional.mjs)…`；未給時不載入)，以之檢測選項並以價格1試算一次(步長格數超過安全整數或數量與名義超出雙精度範圍即throw；實際價位遠低於1且步長極小、或遠高於1而名義超出雙精度範圍者，於回測時才拋錯)，通過後複製並將rule三欄、buffer、units之數字字串轉為數值(units為整數)、補齊buffer與units(不寫入null)，寫入策略之settings.unit(每個策略各一份)，無效時throw(訊息以`invalid opt.unit`起頭、不含輸入值)，null或未給為不使用基礎單位，預設null
+ * @param {Object} [opt.unit=null] 輸入基礎單位選項一般物件{rule,buffer,units}(rule為交易規則{stepSize,minQty,minNotional}，各為有效數字或數字字串且大於0，可另含查得時刻與來源等記錄欄；buffer為非負數，null或未給為0.1；units為正整數，null或未給為1；介面同w-trade-backtest之settings.unit)，給予時才動態載入w-trade-backtest(>=1.1.40)之buildBaseUnitNotional(檔不存在或無預設匯出之函數時throw `opt.unit requires w-trade-backtest >= 1.1.40 (src/buildBaseUnitNotional.mjs)…`；未給時不載入)，以之檢測選項並以價格1試算一次(步長格數超過安全整數或數量與名義超出雙精度範圍即throw；實際價位遠低於1且步長極小、或遠高於1而名義超出雙精度範圍者，於回測時才拋錯)，通過後複製，並以其回傳之轉型後選項(rule三欄、buffer、units皆為數值，未給之buffer與units已補預設，不寫入null)覆蓋副本之對應欄位(本套件不另自行轉換；交易規則之其他欄位原樣保留)，寫入策略之settings.unit(每個策略各一份)，無效時throw(訊息以`invalid opt.unit`起頭、不含輸入值)，null或未給為不使用基礎單位，預設null
  * @returns {Promise} 回傳Promise，resolve為求解結果物件，含bestSolution(最佳解，內有ps設計變數陣列與fitness適應值)、stopMode(觸發停止之機制字串)、stopIteration(停止時之迴圈數)與stopExecutions(停止時之核心分析次數)等欄位
  * @example
  *
  * import ott from './src/ott.mjs'
  *
  * //keys, 待率定門檻之指標key, 各key於fdParam內須有對應之`${key}.json`
- * let keys = ['btc_price_4hr_ma_1day']
+ * let keys = ['price_ohlc_Close_param_ma_1day']
  *
  * let m = await estimKeys(ott, 'btc', 'BTCUSDT', '4hr', './data/ohlc', './data/param', '2022-07-01T00:00:00', '2025-04-08T00:00:00', 'long', keys, './data/strategy', {
  *     thsTp: [1, 2, 3],
@@ -137,6 +256,26 @@ let loadBuildBaseUnitNotional = async () => {
  *     unit: { rule: { stepSize: 0.001, minQty: 0.001, minNotional: 50, asOf: '2026-01-01T00:00:00', source: 'exchangeInfo' }, buffer: 0.1, units: 1 },
  * })
  * console.log(mUnit.stopMode) //策略檔之settings另含uIni 10000與unit(補齊buffer與units), summary之uTradeAllMax為實際名義
+ * // => 'stop by iContinue[100] >= NContiguous[100]'
+ *
+ * //自訂門檻格點(-3至3、步長0.2; 以整數相除產生使各點即十進位值)與交易次數級距之下界(交易次數少之週期, 例如日線)
+ * let mGrid = await estimKeys(ott, 'btc', 'BTCUSDT', '1day', './data/ohlc', './data/param', '2022-07-01T00:00:00', '2025-04-08T00:00:00', 'long', keys, './data/strategy', {
+ *     thsTp: [1, 2, 3],
+ *     thsSl: [1, 2, 3],
+ *     thsCond: Array.from({ length: 31 }, (v, i) => (i - 15) / 5), //[-3, -2.8, ..., 3]
+ *     levelNumTradeBounds: [1, 3, 6, 10, 20, 40],
+ * })
+ * console.log(mGrid.stopMode) //入庫策略之conds門檻皆為thsCond之一, levelNumTrade為不大於交易次數之最大下界, tkid另帶'@1,3,6,10,20,40'
+ * // => 'stop by iContinue[100] >= NContiguous[100]'
+ *
+ * //每根K線之秒數與時間口徑(需w-trade-backtest >= 1.1.43), 'span'依實際時點計持倉天數與回測天數
+ * let mTime = await estimKeys(ott, 'btc', 'BTCUSDT', '1day', './data/ohlc', './data/param', '2022-07-01T00:00:00', '2025-04-08T00:00:00', 'long', keys, './data/strategy', {
+ *     thsTp: [1, 2, 3],
+ *     thsSl: [1, 2, 3],
+ *     intervalSec: 86400,
+ *     timeBasis: 'span',
+ * })
+ * console.log(mTime.stopMode) //策略檔之settings於既有鍵之後另含intervalSec 86400與timeBasis 'span'
  * // => 'stop by iContinue[100] >= NContiguous[100]'
  *
  */
@@ -177,14 +316,18 @@ let estimKeys = async (ott, name, symbol, interval, fdOhlc, fdParam, timeStart, 
     if (methodOml !== 'RGA' && methodOml !== 'DE' && methodOml !== 'HS' && methodOml !== 'PSO' && methodOml !== 'ACO') {
         methodOml = 'PSO' //非五者之一時採PSO, 使solve.methodOml記錄實際採用之演算法
     }
-    let thsTp = get(opt, 'thsTp', null)
-    if (!isearr(thsTp)) {
+
+    //thsTp, thsSl, 止盈止損候選(百分比), 未給(null或undefined)時為1至10(同既有); 給予者影響下單之金額與回測結果, 須為有效候選(見parseThsPct), 無效即throw(不改用預設), 於建立fdData與載入數據之前; 通過者轉為數值後使用與落地(檢測之值即使用之值)
+    let thsTp = parseThsPct(get(opt, 'thsTp', null), 'opt.thsTp')
+    if (thsTp === null) {
         thsTp = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
     }
-    let thsSl = get(opt, 'thsSl', null)
-    if (!isearr(thsSl)) {
+    let thsSl = parseThsPct(get(opt, 'thsSl', null), 'opt.thsSl')
+    if (thsSl === null) {
         thsSl = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
     }
+
+    //thNumTrade, thRWin, thREquivalentCumuProfitOrLossFinalNormYear, 入庫之篩選門檻, 無效時改用預設(跨套件規格K3, 不影響下單金額)
     let thNumTrade = get(opt, 'thNumTrade', null)
     if (!isnum(thNumTrade)) {
         thNumTrade = 1
@@ -219,7 +362,7 @@ let estimKeys = async (ott, name, symbol, interval, fdOhlc, fdParam, timeStart, 
 
     //unit, 基礎單位選項{rule,buffer,units}(寫入策略之settings.unit, 由w-trade-backtest依基礎單位定每單名義), 未給時為null(同既有, 每單名義為uTrade)
     //  給予時才動態載入w-trade-backtest之buildBaseUnitNotional(未給unit之路徑不依賴該檔), 先複製(各欄位僅讀取一次, 其後檢測與轉換皆用此副本, 檢測之值即使用之值),
-    //  以之檢測(與回測各路徑檢測settings.unit者同一函數; 無效即throw, 於載入數據之前), 再將rule三欄、buffer、units轉為數值(與回測套件之轉型同一函數: cdbl、cint)並補齊buffer與units(null或未給時補預設, 不寫入null), 使策略檔記錄實際採用之數值
+    //  以之檢測(與回測各路徑檢測settings.unit者同一函數; 無效即throw, 於載入數據之前), 並取其回傳之轉型後選項(rule三欄、buffer、units為數值, null或未給之buffer與units已補預設, 不寫入null)覆蓋副本之對應欄位, 使策略檔記錄實際採用之數值
     let unit = get(opt, 'unit', null)
     let unitKey = null //基礎單位選項之識別字串(buildBaseUnitNotional之key, 同key即同口徑), 供同tkid覆寫前比對新舊口徑
     let buildBaseUnitNotional = null
@@ -229,13 +372,41 @@ let estimKeys = async (ott, name, symbol, interval, fdOhlc, fdParam, timeStart, 
         }
         buildBaseUnitNotional = await loadBuildBaseUnitNotional()
         unit = cloneDeep(unit)
-        unitKey = buildBaseUnitNotional(unit, 'opt.unit').key //須為一般物件、rule三欄與buffer、units有效(數字或數字字串), 並以價格1試算一次; 無效時throw(訊息以`invalid opt.unit`起頭, 不含輸入值)
-        unit.rule.stepSize = cdbl(unit.rule.stepSize)
-        unit.rule.minQty = cdbl(unit.rule.minQty)
-        unit.rule.minNotional = cdbl(unit.rule.minNotional)
-        unit.buffer = (unit.buffer === undefined || unit.buffer === null) ? 0.1 : cdbl(unit.buffer)
-        unit.units = (unit.units === undefined || unit.units === null) ? 1 : cint(unit.units)
+        let bu = buildBaseUnitNotional(unit, 'opt.unit') //須為一般物件、rule三欄與buffer、units有效(數字或數字字串), 並以價格1試算一次; 無效時throw(訊息以`invalid opt.unit`起頭, 不含輸入值)
+        unitKey = bu.key
+        //以回測套件轉型後之選項(bu.unit: rule三欄、buffer、units皆為數值, 未給之buffer與units已補預設)覆蓋副本之對應欄位, 本套件不另自行轉換; 其餘欄位(交易規則之查得時刻與來源等記錄欄)原樣保留
+        Object.assign(unit.rule, bu.unit.rule)
+        unit.buffer = bu.unit.buffer
+        unit.units = bu.unit.units
     }
+
+    //thsCond, 條件門檻之格點(各key共用, '>'與'<'兩組相同), 未給時為null(同既有, 格點為rang(-thLim,thLim,thLim*20)); 給予者檢測、轉為數值並編碼為設計變數之可用值, 無效即throw(於載入數據之前)
+    let rThsCond = parseThsCond(get(opt, 'thsCond', null))
+    let thsCond = rThsCond === null ? null : rThsCond.ths
+    let mapCond = rThsCond === null ? null : rThsCond.mapCond
+
+    //levelNumTradeBounds, 交易次數級距之下界, 未給時為null(同既有, 採calcLevelNumTrade之預設級距); 給予者檢測並轉為數值, 無效即throw(於載入數據之前)
+    let levelNumTradeBounds = parseLevelNumTradeBounds(get(opt, 'levelNumTradeBounds', null), 'opt.levelNumTradeBounds')
+
+    //optFn, genStrategyFileName之設定(級距設定須與tkid一致)
+    let optFn = { levelNumTradeBounds }
+
+    //intervalSec, timeBasis, 每根K線之秒數與時間口徑(名稱與w-trade-backtest之settings同), 未給時皆為null(同既有, settings不附加);
+    //  給予任一者時以w-trade-backtest(>=1.1.43)之parseBarTime檢測(與回測各路徑檢測settings.intervalSec、settings.timeBasis者同一函數; 無效即throw, 於載入數據之前), 只把有給之鍵(其回傳之轉換後之值)附加於策略之settings
+    let intervalSec = get(opt, 'intervalSec', null)
+    let timeBasis = get(opt, 'timeBasis', null)
+    let settingsTime = null //附加於策略settings之時間口徑鍵(只含有給者; 鍵序intervalSec、timeBasis)
+    if (intervalSec !== null || timeBasis !== null) {
+        let bt = parseBarTime({ intervalSec, timeBasis }, 'opt') //無效時throw(訊息為`invalid opt.intervalSec: …`或`invalid opt.timeBasis: …`, 不含輸入值)
+        settingsTime = {} //寫入之值以parseBarTime回傳之轉型值為準(intervalSec為數值)
+        if (intervalSec !== null) {
+            settingsTime.intervalSec = bt.intervalSec
+        }
+        if (timeBasis !== null) {
+            settingsTime.timeBasis = bt.timeBasis
+        }
+    }
+    let timeKey = timeKeyOf(settingsTime) //本次之時間口徑, 未給為'open'
 
     //provideData
     let provideData = dataProvide(fdOhlc, fdParam)
@@ -303,6 +474,15 @@ let estimKeys = async (ott, name, symbol, interval, fdOhlc, fdParam, timeStart, 
         //dps, 基於keys
         each(keys, () => {
 
+            //給opt.thsCond時, 可用值為其編碼('>'組為各格點+vdir、'<'組為各格點-vdir, 見parseThsCond), 每個key各一份副本
+            if (rThsCond !== null) {
+                dps.push({
+                    values: [...rThsCond.values],
+                    n: size(rThsCond.values),
+                })
+                return
+            }
+
             //大於條件
             // let valuesU_fine = rang(0.01, 0.10, 9) //細粒度小尺度區: [0.01, 0.10] step 0.01 (10 點, 給 absP99 < 0.1 的 115 個小尺度 keyOut)
             // let valuesU_main = rang(0.15, 2.0, 37) //主區: [0.15, 2.0] step 0.05 (38 點)
@@ -355,8 +535,8 @@ let estimKeys = async (ott, name, symbol, interval, fdOhlc, fdParam, timeStart, 
     }
 
     //checkSavable, 檢查指定檔名處是否可寫入策略: 無檔案或舊檔非合法json回傳true(直接寫入);
-    //  舊檔身分(tkid/name/interval)與本次不一致代表雜湊碰撞, 直接throw以避免無聲覆寫;
-    //  舊檔與本次之基礎單位口徑不同(新舊口徑混存, 等效年化不可比較)回傳true(以本次口徑覆寫並於日誌警告);
+    //  舊檔身分(tkid/name/interval)或指標keys與本次不一致代表雜湊碰撞, 直接throw以避免無聲覆寫;
+    //  舊檔與本次之基礎單位口徑或時間口徑不同(新舊口徑混存, 等效年化不可比較)回傳true(以本次口徑覆寫並於日誌警告);
     //  新等效年化盈虧較佳時回傳true(原地覆寫), 否則回傳false(保留既有較佳者)
     let checkSavable = (fpStrategy, fnStrategy, tkid, rEquivalentCumuProfitOrLossFinalNormYearNew) => {
 
@@ -382,11 +562,28 @@ let estimKeys = async (ott, name, symbol, interval, fdOhlc, fdParam, timeStart, 
             throw new Error(`hash collision: fnStrategy[${fnStrategy}], tkidOld[${tkidOld}] vs tkid[${tkid}], nameOld[${nameOld}] vs name[${name}], intervalOld[${intervalOld}] vs interval[${interval}]`)
         }
 
+        //覆寫前驗證舊檔之指標keys與本次相同: tid由keys縮寫而得(剔除`${name}_`、`${interval}_`等樣式), 縮寫後相同而keys不同者其tkid與檔名皆同, 只比tkid、name、interval看不出, 會以等效年化互相覆寫而不報錯;
+        //  keys不同代表雜湊碰撞(同上), 直接throw(訊息不帶keys之值); 舊檔無keys(非陣列, 如舊版所存)者同上列各欄之寬鬆處理, 不比對
+        let keysOld = get(dataOld, 'keys', null)
+        if (Array.isArray(keysOld) && !isEqual(keysOld, keys)) {
+            throw new Error(`hash collision: fnStrategy[${fnStrategy}], keysOld differs from keys, tkid[${tkid}]`)
+        }
+
         //check, 新舊基礎單位口徑不同(一方有一方無, 或交易規則、緩衝、單位數不同)則等效年化不可比較, 以本次口徑覆寫, 日誌警告(不帶值, 只帶檔名)
         if (!isSameUnit(get(dataOld, 'settings.unit', null))) {
 
             if (useShowLog) {
                 console.log(`警告: 既有策略與本次之基礎單位口徑不同, 以本次口徑覆寫(不比較等效年化)`, fnStrategy)
+            }
+
+            return true
+        }
+
+        //check, 新舊時間口徑不同(缺timeBasis等同'open', 'open'時不計intervalSec; 'span'與'open'或'span'之intervalSec不同)則等效年化不可比較, 以本次口徑覆寫, 日誌警告(不帶值, 只帶檔名)
+        if (timeKeyOf(get(dataOld, 'settings', null)) !== timeKey) {
+
+            if (useShowLog) {
+                console.log(`警告: 既有策略與本次之時間口徑不同, 以本次口徑覆寫(不比較等效年化)`, fnStrategy)
             }
 
             return true
@@ -435,8 +632,14 @@ let estimKeys = async (ott, name, symbol, interval, fdOhlc, fdParam, timeStart, 
             //x
             let x = get(xs, ix, null)
 
-            //check
-            if (x === null) {
+            //dec, 給opt.thsCond時由可用值查回{sym,th}(th為格點原值)
+            let dec = null
+            if (x !== null && mapCond !== null) {
+                dec = mapCond.has(x) ? mapCond.get(x) : null
+            }
+
+            //check, 給opt.thsCond時解值須為其可用值之一
+            if (x === null || (mapCond !== null && dec === null)) {
                 console.log('xs', xs)
                 console.log('ix', ix)
                 console.log('key', key)
@@ -444,10 +647,14 @@ let estimKeys = async (ott, name, symbol, interval, fdOhlc, fdParam, timeStart, 
                 throw new Error(`invalid x`)
             }
 
-            //sym, th
+            //sym, th, 給opt.thsCond時取查回之格點原值, 否則扣除平移值並取至小數3位(同既有)
             let sym = ''
             let th = null
-            if (x < 0) {
+            if (dec !== null) {
+                sym = dec.sym
+                th = dec.th
+            }
+            else if (x < 0) {
                 sym = '<'
                 th = x + vdir
                 th = wround(th, 3) //門檻小數位要夠多, 否則切細會被抹去
@@ -498,6 +705,11 @@ let estimKeys = async (ott, name, symbol, interval, fdOhlc, fdParam, timeStart, 
         if (unit !== null) {
             strategy.settings.unit = cloneDeep(unit) //基礎單位選項(含交易規則與緩衝), 隨策略檔落地; 每個策略各一份, 評估核心就地改動不影響其他候選
         }
+        if (settingsTime !== null) {
+            each(settingsTime, (v, k) => {
+                strategy.settings[k] = v //時間口徑(intervalSec、timeBasis; 只有給了之鍵), 接於既有鍵之後, 隨策略檔落地, 回測與重放依之
+            })
+        }
 
         //runStrategy
         let r = null
@@ -524,11 +736,11 @@ let estimKeys = async (ott, name, symbol, interval, fdOhlc, fdParam, timeStart, 
             //numTrade
             let numTrade = cint(r.summary.numTrade)
 
-            //levelNumTrade
-            let levelNumTrade = calcLevelNumTrade(numTrade)
+            //levelNumTrade, 未給opt.levelNumTradeBounds時為預設級距(同既有)
+            let levelNumTrade = calcLevelNumTrade(numTrade, { levelNumTradeBounds })
 
-            //tkid
-            let tkid = `${tid}:${levelNumTrade}`
+            //tkid, 給opt.levelNumTradeBounds時級距段另帶級距設定(未給時為`${tid}:${levelNumTrade}`, 同既有)
+            let tkid = `${tid}:${tagLevelNumTrade(levelNumTrade, levelNumTradeBounds)}`
 
             return {
 
@@ -552,6 +764,8 @@ let estimKeys = async (ott, name, symbol, interval, fdOhlc, fdParam, timeStart, 
                     thREquivalentCumuProfitOrLossFinalNormYear,
                     thsTp,
                     thsSl,
+                    ...(thsCond === null ? {} : { thsCond }), //給opt.thsCond時才記(轉為數值之格點), 未給者不記(同既有)
+                    ...(levelNumTradeBounds === null ? {} : { levelNumTradeBounds }), //給opt.levelNumTradeBounds時才記(轉為數值之下界), 未給者不記(同既有)
                     timeSolved: ott().format('YYYY-MM-DDTHH:mm:ss'),
                 },
 
@@ -620,7 +834,7 @@ let estimKeys = async (ott, name, symbol, interval, fdOhlc, fdParam, timeStart, 
             }
 
             //fnStrategy, 檔名為tkid之純函數, 故可直接組出檔名查詢既有策略, 不需列舉全庫
-            let fnStrategy = genStrategyFileName(name, interval, mode, keys, strategy.settings, r.summary)
+            let fnStrategy = genStrategyFileName(name, interval, mode, keys, strategy.settings, r.summary, optFn)
 
             //fpStrategy
             let fpStrategy = path.resolve(fdData, fnStrategy)
@@ -645,7 +859,7 @@ let estimKeys = async (ott, name, symbol, interval, fdOhlc, fdParam, timeStart, 
                     res = genRes(r)
 
                     //fnStrategyRe, 以重跑之summary重算檔名, 使檔名級距與檔內同源
-                    let fnStrategyRe = genStrategyFileName(name, interval, mode, keys, strategy.settings, r.summary)
+                    let fnStrategyRe = genStrategyFileName(name, interval, mode, keys, strategy.settings, r.summary, optFn)
 
                     //check, 檔名有變代表評估核心與重跑結果跨級距, 新檔名須重做存在檢查/身分驗證/優劣比較, 不可沿用原檔名之通過結果
                     if (fnStrategyRe !== fnStrategy) {

@@ -433,7 +433,7 @@ console.log(calcFitness(settings, summaryNone))
 
     
 
-    <h4 class="name" id="calcLevelNumTrade"><span class="type-signature"></span>calcLevelNumTrade<span class="signature">(numTrade)</span><span class="type-signature"> &rarr; {Number}</span></h4>
+    <h4 class="name" id="calcLevelNumTrade"><span class="type-signature"></span>calcLevelNumTrade<span class="signature">(numTrade, opt<span class="signature-attributes">opt</span>)</span><span class="type-signature"> &rarr; {Number}</span></h4>
 
     
 
@@ -445,15 +445,17 @@ console.log(calcFitness(settings, summaryNone))
     <dt class="tag-description">Description:</dt>
     <dd class="tag-description"><ul class="dummy"><li><p>計算交易次數所屬級距代碼levelNumTrade</p>
 <p>交易次數過少之策略統計意義不足，過多則屬高頻，故以級距分群，使不同交易次數規模之策略各自保留最佳者
-級距對應為: &lt;=0為0，1-5為1，6-9為2，10-24為11，25-49為12，50-74為13，75-99為14，100-249為101，250-499為102，500-749為103，750-999為104，1000-1999為1001，2000-2999為1002，3000-3999為1003，4000-4999為1004，&gt;=5000為100
-numTrade非數值時throw</p>
+未給opt.levelNumTradeBounds時採預設級距(與K線週期無關，依4hr策略庫之交易次數規模所訂)，對應為: &lt;=0為0，1-5為1，6-9為2，10-24為11，25-49為12，50-74為13，75-99為14，100-249為101，250-499為102，500-749為103，750-999為104，1000-1999為1001，2000-2999為1002，3000-3999為1003，4000-4999為1004，&gt;=5000為100
+給opt.levelNumTradeBounds(各級距之下界，嚴格遞增之正整數陣列，例如[1,3,6,10,20,40])時，級距代碼為不大於交易次數之最大下界，交易次數小於首個下界(含&lt;=0)者為0，大於等於末個下界者為末個下界(末級距不設上限)；例如下界[1,3,6]時0為0，1-2為1，3-5為3，&gt;=6為6
+第2參數為設定物件(與genStrategyFileName之opt同形)，非物件者(例如作為陣列map之回呼時所收之索引)取不到opt.levelNumTradeBounds即視為未給，故[3,30].map(calcLevelNumTrade)照舊可用
+numTrade非數值時throw；opt.levelNumTradeBounds給予而無效時throw(訊息為<code>invalid opt.levelNumTradeBounds: must be a non-empty array of at most 101 strictly increasing positive integers</code>，不含輸入值)</p>
 <p>Unit Test: <a href="https://github.com/yuda-lyu/w-trade-solve/blob/master/test/unit-calcLevelNumTrade.test.mjs">Github</a></p></li></ul></dd>
     
 
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="calcLevelNumTrade.mjs.html">calcLevelNumTrade.mjs</a>, <a href="calcLevelNumTrade.mjs.html#line31">line 31</a>
+        <a href="calcLevelNumTrade.mjs.html">calcLevelNumTrade.mjs</a>, <a href="calcLevelNumTrade.mjs.html#line42">line 42</a>
     </li></ul></dd>
     
 
@@ -510,7 +512,12 @@ console.log(calcLevelNumTrade(30))
 // => 12
 
 console.log(calcLevelNumTrade(8000))
-// => 100</code></pre>
+// => 100
+
+//自訂級距之下界, 代碼為不大於交易次數之最大下界
+let opt = { levelNumTradeBounds: [1, 3, 6] }
+console.log(calcLevelNumTrade(0, opt), calcLevelNumTrade(2, opt), calcLevelNumTrade(5, opt), calcLevelNumTrade(40, opt))
+// => 0 1 3 6</code></pre>
 
 
 
@@ -528,7 +535,11 @@ console.log(calcLevelNumTrade(8000))
         <th>Type</th>
 
         
+        <th>Attributes</th>
+        
 
+        
+        <th>Default</th>
         
 
         <th class="last">Description</th>
@@ -554,10 +565,132 @@ console.log(calcLevelNumTrade(8000))
             </td>
 
             
+                <td class="attributes">
+                
 
+                
+
+                
+                </td>
+            
+
+            
+                <td class="default">
+                
+                </td>
             
 
             <td class="description last"><p>輸入交易次數數值</p></td>
+        </tr>
+
+    
+
+        <tr>
+            
+                <td class="name"><code>opt</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type">Object</span>
+
+
+
+            
+            </td>
+
+            
+                <td class="attributes">
+                
+                    &lt;optional><br>
+                
+
+                
+
+                
+                </td>
+            
+
+            
+                <td class="default">
+                
+                    <code>{}</code>
+                
+                </td>
+            
+
+            <td class="description last"><p>輸入設定物件，預設{}</p>
+                <h6>Properties</h6>
+                
+
+<table class="params">
+    <thead>
+    <tr>
+        
+        <th>Name</th>
+        
+
+        <th>Type</th>
+
+        
+        <th>Attributes</th>
+        
+
+        
+        <th>Default</th>
+        
+
+        <th class="last">Description</th>
+    </tr>
+    </thead>
+
+    <tbody>
+    
+
+        <tr>
+            
+                <td class="name"><code>levelNumTradeBounds</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type">Array</span>
+
+
+
+            
+            </td>
+
+            
+                <td class="attributes">
+                
+                    &lt;optional><br>
+                
+
+                
+
+                
+                </td>
+            
+
+            
+                <td class="default">
+                
+                    <code>null</code>
+                
+                </td>
+            
+
+            <td class="description last"><p>輸入各級距下界之正整數陣列(數字或整數字串，轉為數值後須嚴格遞增，至多101個)，null或未給為採預設級距，預設null</p></td>
+        </tr>
+
+    
+    </tbody>
+</table>
+
+            </td>
         </tr>
 
     
@@ -1841,13 +1974,16 @@ await estimFinder(ott, 'btc', 'BTCUSDT', '4hr', './data/ohlc', './data/param', '
     <dd class="tag-description"><ul class="dummy"><li><p>針對指定keys率定各key之門檻與止盈止損，求解最佳策略</p>
 <p>設計變數為[止損比例, 止盈比例, ...各key之門檻]，止損與止盈由opt.thsSl與opt.thsTp給予之百分比清單離散取值
 各key門檻取值範圍為[-thLim,thLim]切為thLim<em>20段，並各自平移+vdir與-vdir(vdir=thLim</em>5)為兩組，使解值恆大於0代表'&gt;'條件、恆小於0代表'&lt;'條件，還原時再扣除平移值，故單一設計變數即同時涵蓋大於與小於兩種條件
+未給opt.thsCond時thLim為2(格點為-2至2、步長0.1共41點，與K線週期及因子尺度無關)，還原之門檻取至小數3位；給opt.thsCond(門檻格點陣列)時改以其為各key共用之格點('&gt;'與'&lt;'兩組相同)，平移量vdir為max(格點絕對值之最大者,2)<em>5(格點落於[-2,2]者同為10)，每個key之設計變數可用值為格點數之2倍，還原時直接查回格點原值(不經浮點運算，入庫之門檻必為所給格點之一)
 以w-optimization之最佳化函數求解，由opt.methodOml指定演算法，各次計算皆以w-trade-backtest之runStrategy回測並經calcFitness計算適應值；亦可由opt.funRunStrategyCustom注入自訂評估核心加速求解(如以w-trade-backtest之buildStrategyFastSession預算first-touch表與因子對位序列)，注入僅回傳精簡欄位之核心時可配合opt.useRunStrategyBeforeSave於存檔前重跑完整回測，使落地summary維持完整欄位口徑；存檔前重跑後檔內numTrade、levelNumTrade、tkid、fitness與檔名皆由重跑之summary重新衍生，確保檔名與檔案內容同源一致；重算檔名與原檔名不同(評估核心與重跑結果跨級距)時，對新檔名重做存在檢查、身分驗證與優劣比較，新檔名已有更佳者則放棄本次寫入
-各次計算結果若同時滿足交易次數、勝率與最終等效年化盈虧三門檻，則以genStrategyFileName產生檔名存入fdData；檔名為tkid(tid+交易次數級距)之純函數，故直接組出檔名查詢既有策略(O(1)，不列舉全庫)，同tkid已有策略時僅於最終等效年化盈虧更佳時原地覆寫，故同tkid恆僅一檔；覆寫前驗證舊檔內tkid、name與interval與本次一致，不一致代表雜湊碰撞，直接throw以避免無聲覆寫
-策略檔內容除策略本體(tid、sid、name、symbol、interval、keyOhlc、mode、conds、settings)與summary、fitness外，另落地tkid、numTrade、levelNumTrade、keys與solve區塊(timeStart、timeEnd、methodOml、thNumTrade、thRWin、thREquivalentCumuProfitOrLossFinalNormYear、thsTp、thsSl、timeSolved)，使識別與求解條件欄位自足，不依賴檔名
-策略之settings為{uIni,uTrade,rTakeProfit,rStopLoss,rFee}，uIni取opt.uIni(未給為1000)、uTrade恆為1、rFee恆為0.0005；給opt.unit時另含unit(補齊buffer與units，交易規則之其他欄位如查得時刻與來源原樣保留)，回測依基礎單位定每單名義(不讀uTrade)，交易規則與緩衝隨策略檔落地；未給opt.uIni與opt.unit時settings與既有逐位相同
-opt.uIni與opt.unit之數值收數字或數字字串，檢測通過即轉為數值後使用與落地(檢測之值即使用之值)，策略檔內為數值而非原字串；無效即throw，訊息為<code>invalid opt.&lt;名稱&gt;: must be &lt;種類&gt;</code>且不含輸入值，於載入數據、建立fdData之前
+各次計算結果若同時滿足交易次數、勝率與最終等效年化盈虧三門檻，則以genStrategyFileName產生檔名存入fdData；檔名為tkid(tid+交易次數級距)之純函數，故直接組出檔名查詢既有策略(O(1)，不列舉全庫)，同tkid已有策略時僅於最終等效年化盈虧更佳時原地覆寫，故同tkid恆僅一檔；覆寫前驗證舊檔內tkid、name、interval與keys(舊檔有keys者)與本次一致，不一致代表雜湊碰撞(tid為keys縮寫而得，縮寫後相同而keys不同者其tkid與檔名皆同)，直接throw以避免無聲覆寫
+交易次數級距未給opt.levelNumTradeBounds時採calcLevelNumTrade之預設級距(與K線週期無關)，tkid為<code>${tid}:${levelNumTrade}</code>；給opt.levelNumTradeBounds(各級距之下界)時級距代碼為不大於交易次數之最大下界，tkid為<code>${tid}:${levelNumTrade}@${下界以逗號串接}</code>，檔名之雜湊隨之不同，故同一資料夾混用不同級距設定時各自去重、互不覆寫(覆寫前之tkid驗證亦含級距設定)
+策略檔內容除策略本體(tid、sid、name、symbol、interval、keyOhlc、mode、conds、settings)與summary、fitness外，另落地tkid、numTrade、levelNumTrade、keys與solve區塊(timeStart、timeEnd、methodOml、thNumTrade、thRWin、thREquivalentCumuProfitOrLossFinalNormYear、thsTp、thsSl、timeSolved；給opt.thsCond或opt.levelNumTradeBounds時另於thsSl之後記轉為數值之thsCond與levelNumTradeBounds，未給者不記)，使識別與求解條件欄位自足，不依賴檔名
+策略之settings為{uIni,uTrade,rTakeProfit,rStopLoss,rFee}，uIni取opt.uIni(未給為1000)、uTrade恆為1、rFee恆為0.0005；給opt.unit時另含unit(補齊buffer與units，交易規則之其他欄位如查得時刻與來源原樣保留)，回測依基礎單位定每單名義(不讀uTrade)，交易規則與緩衝隨策略檔落地；給opt.intervalSec或opt.timeBasis時再於其後附加有給之鍵(intervalSec、timeBasis，轉換後之值)，回測與重放依之；未給opt.uIni、opt.unit、opt.intervalSec與opt.timeBasis時settings與既有逐位相同
+opt.intervalSec(每根K線之秒數)與opt.timeBasis(時間口徑'open'或'span')之名稱與語意同w-trade-backtest之settings.intervalSec、settings.timeBasis：只給intervalSec(或timeBasis為'open')不改任何績效數字；timeBasis為'span'(須同時給intervalSec)時持倉天數與回測天數依實際時點計，等效年化隨之改變，故入庫門檻與適應值亦隨之；給予任一者時以w-trade-backtest(&gt;=1.1.43)之src/barTime.mjs預設匯出parseBarTime檢測(與回測各路徑同一函數，判準與訊息由回測套件定)，寫入settings之值以其回傳之轉型值為準；intervalSec須與K線之實際間距一致(本套件與回測套件皆不檢查)；同一資料夾之所有寫入者須用同一時間口徑(口徑不同即不比優劣而覆寫，見下)
+opt.uIni、opt.unit、opt.thsTp、opt.thsSl、opt.thsCond、opt.levelNumTradeBounds與opt.intervalSec之數值收數字或數字字串，檢測通過即轉為數值後使用與落地(檢測之值即使用之值)，策略檔內為數值而非原字串；opt.thNumTrade、opt.thRWin與opt.thREquivalentCumuProfitOrLossFinalNormYear為入庫之篩選門檻，無效時改用預設(不影響下單金額)，其餘各選項給了而無效即throw，訊息為<code>invalid opt.&lt;名稱&gt;: must be &lt;種類&gt;</code>且不含輸入值，於載入數據、建立fdData之前(經estimPicks、estimComps、estimFinder呼叫時，指標key之列舉與opt.funFilterKeys</em>回呼先於此檢測，仍先於建立fdData與寫檔)
 單一策略不設持倉門檻：最大持倉名義(summary.uTradeAllMax，給opt.unit時為實際名義)是否超過uIni不檢、不剔除，只隨summary落地；入庫條件與適應值不變
-同tkid已有策略時，若既有策略檔之settings.unit與本次不同(一方有一方無，或交易規則三欄、緩衝、單位數不同；查得時刻與來源等記錄欄不計)，視為新舊口徑混存，不以等效年化比較而以本次口徑覆寫，並於opt.useShowLog為true時於日誌記一行警告(不帶值)；口徑相同者照舊以等效年化比較
+同tkid已有策略時，若既有策略檔之settings.unit與本次不同(一方有一方無，或交易規則三欄、緩衝、單位數不同；查得時刻與來源等記錄欄不計)，或時間口徑不同(缺timeBasis等同'open'；'open'時不計intervalSec；'span'與'open'不同，'span'之intervalSec不同亦不同)，視為新舊口徑混存，不以等效年化比較而以本次口徑覆寫，並於opt.useShowLog為true時於日誌記一行警告(不帶值)；口徑相同者照舊以等效年化比較
 opt.useShowLog為true時，日誌中之「每次下單金額」於未給opt.unit時為uTrade，給opt.unit時各單名義依基礎單位而異，改顯示summary可得之最大持倉名義(summary.uTradeAllMax)
 opt除下列各欄位外，其餘欄位皆原樣傳遞至所選之最佳化函數，兩者欄位名稱無重疊，故可一併給予求解設定
 各演算法共通之設定為NContiguous(最佳解連續未更新次數上限，預設100)、NRepeat、NCore、ModeOutLimit、UseRepeat、UseImmigration、LocalSearchMethod與funGetBetter、funGenerationBefore、funGenerationAfter三接口；族群數與迴圈數之欄位名稱各演算法不同，RGA與DE為Np與Ng、PSO為Np與Nl、HS為Ns與Ni、ACO為Na與Nl；另各演算法有其專屬超參數，如PSO之psoC1Start、RGA之rgaCrossover、DE之deF、HS之hsHMCR與ACO之acoAlphaStart等
@@ -1859,7 +1995,7 @@ name、symbol、interval、fdOhlc、fdParam、timeStart、timeEnd、keys、fdDat
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="estimKeys.mjs.html">estimKeys.mjs</a>, <a href="estimKeys.mjs.html#line143">line 143</a>
+        <a href="estimKeys.mjs.html">estimKeys.mjs</a>, <a href="estimKeys.mjs.html#line282">line 282</a>
     </li></ul></dd>
     
 
@@ -1909,7 +2045,7 @@ name、symbol、interval、fdOhlc、fdParam、timeStart、timeEnd、keys、fdDat
     <pre class="prettyprint"><code>import ott from './src/ott.mjs'
 
 //keys, 待率定門檻之指標key, 各key於fdParam內須有對應之`${key}.json`
-let keys = ['btc_price_4hr_ma_1day']
+let keys = ['price_ohlc_Close_param_ma_1day']
 
 let m = await estimKeys(ott, 'btc', 'BTCUSDT', '4hr', './data/ohlc', './data/param', '2022-07-01T00:00:00', '2025-04-08T00:00:00', 'long', keys, './data/strategy', {
     thsTp: [1, 2, 3],
@@ -1940,6 +2076,26 @@ let mUnit = await estimKeys(ott, 'btc', 'BTCUSDT', '4hr', './data/ohlc', './data
     unit: { rule: { stepSize: 0.001, minQty: 0.001, minNotional: 50, asOf: '2026-01-01T00:00:00', source: 'exchangeInfo' }, buffer: 0.1, units: 1 },
 })
 console.log(mUnit.stopMode) //策略檔之settings另含uIni 10000與unit(補齊buffer與units), summary之uTradeAllMax為實際名義
+// => 'stop by iContinue[100] >= NContiguous[100]'
+
+//自訂門檻格點(-3至3、步長0.2; 以整數相除產生使各點即十進位值)與交易次數級距之下界(交易次數少之週期, 例如日線)
+let mGrid = await estimKeys(ott, 'btc', 'BTCUSDT', '1day', './data/ohlc', './data/param', '2022-07-01T00:00:00', '2025-04-08T00:00:00', 'long', keys, './data/strategy', {
+    thsTp: [1, 2, 3],
+    thsSl: [1, 2, 3],
+    thsCond: Array.from({ length: 31 }, (v, i) => (i - 15) / 5), //[-3, -2.8, ..., 3]
+    levelNumTradeBounds: [1, 3, 6, 10, 20, 40],
+})
+console.log(mGrid.stopMode) //入庫策略之conds門檻皆為thsCond之一, levelNumTrade為不大於交易次數之最大下界, tkid另帶'@1,3,6,10,20,40'
+// => 'stop by iContinue[100] >= NContiguous[100]'
+
+//每根K線之秒數與時間口徑(需w-trade-backtest >= 1.1.43), 'span'依實際時點計持倉天數與回測天數
+let mTime = await estimKeys(ott, 'btc', 'BTCUSDT', '1day', './data/ohlc', './data/param', '2022-07-01T00:00:00', '2025-04-08T00:00:00', 'long', keys, './data/strategy', {
+    thsTp: [1, 2, 3],
+    thsSl: [1, 2, 3],
+    intervalSec: 86400,
+    timeBasis: 'span',
+})
+console.log(mTime.stopMode) //策略檔之settings於既有鍵之後另含intervalSec 86400與timeBasis 'span'
 // => 'stop by iContinue[100] >= NContiguous[100]'</code></pre>
 
 
@@ -2506,7 +2662,7 @@ console.log(mUnit.stopMode) //策略檔之settings另含uIni 10000與unit(補齊
                 </td>
             
 
-            <td class="description last"><p>輸入止盈門檻百分比數值陣列，預設[1,2,3,4,5,6,7,8,9,10]</p></td>
+            <td class="description last"><p>輸入止盈門檻百分比陣列(非空陣列，各元素為正數之數字或數字字串，通過即轉為數值；除以100取至小數3位後須仍大於0，即不得為0、負數或小於0.05)，給予而無效時throw(訊息為<code>invalid opt.thsTp: must be a non-empty array of positive numbers that stay positive after rounding</code>，不含輸入值；止盈影響下單之金額與回測結果，不改用預設)，null或未給為預設，預設[1,2,3,4,5,6,7,8,9,10]</p></td>
         </tr>
 
     
@@ -2546,7 +2702,170 @@ console.log(mUnit.stopMode) //策略檔之settings另含uIni 10000與unit(補齊
                 </td>
             
 
-            <td class="description last"><p>輸入止損門檻百分比數值陣列，預設[1,2,3,4,5,6,7,8,9,10]</p></td>
+            <td class="description last"><p>輸入止損門檻百分比陣列(規則與opt.thsTp相同)，給予而無效時throw(訊息為<code>invalid opt.thsSl: must be a non-empty array of positive numbers that stay positive after rounding</code>)，null或未給為預設，預設[1,2,3,4,5,6,7,8,9,10]</p></td>
+        </tr>
+
+    
+
+        <tr>
+            
+                <td class="name"><code>thsCond</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type">Array</span>
+
+
+
+            
+            </td>
+
+            
+                <td class="attributes">
+                
+                    &lt;optional><br>
+                
+
+                
+
+                
+                </td>
+            
+
+            
+                <td class="default">
+                
+                    <code>null</code>
+                
+                </td>
+            
+
+            <td class="description last"><p>輸入各key條件門檻之格點陣列(各元素為有效數字或數字字串，轉為數值後須嚴格遞增；各key與'&gt;'、'&lt;'兩方向共用)，入庫之門檻必為其中之一(原值，不取捨小數位)，至多1001點(記於每個策略檔之solve.thsCond)，給予而無效時throw(訊息為<code>invalid opt.thsCond: must be a non-empty array of at most 1001 strictly increasing finite numbers</code>)，null或未給為預設格點(-2至2、步長0.1，還原取至小數3位)，預設null</p></td>
+        </tr>
+
+    
+
+        <tr>
+            
+                <td class="name"><code>levelNumTradeBounds</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type">Array</span>
+
+
+
+            
+            </td>
+
+            
+                <td class="attributes">
+                
+                    &lt;optional><br>
+                
+
+                
+
+                
+                </td>
+            
+
+            
+                <td class="default">
+                
+                    <code>null</code>
+                
+                </td>
+            
+
+            <td class="description last"><p>輸入交易次數各級距之下界陣列(正整數或整數字串，轉為數值後須嚴格遞增，至多101個，記於每個策略檔之tkid與solve.levelNumTradeBounds)，級距代碼為不大於交易次數之最大下界(小於首個下界者為0)，tkid另帶級距設定(<code>${tid}:${levelNumTrade}@${下界以逗號串接}</code>)，給予而無效時throw(訊息為<code>invalid opt.levelNumTradeBounds: must be a non-empty array of at most 101 strictly increasing positive integers</code>)，null或未給為calcLevelNumTrade之預設級距，預設null</p></td>
+        </tr>
+
+    
+
+        <tr>
+            
+                <td class="name"><code>intervalSec</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type">Integer</span>
+|
+
+<span class="param-type">String</span>
+
+
+
+            
+            </td>
+
+            
+                <td class="attributes">
+                
+                    &lt;optional><br>
+                
+
+                
+
+                
+                </td>
+            
+
+            
+                <td class="default">
+                
+                    <code>null</code>
+                
+                </td>
+            
+
+            <td class="description last"><p>輸入每根K線之秒數(正整數或整數字串；判準與訊息由w-trade-backtest之parseBarTime決定，寫入其回傳之轉型值；須與K線之實際間距一致，本套件與回測套件皆不檢查)，給予時附加於策略之settings.intervalSec(只給此鍵不改任何績效數字)，null或未給為不附加，預設null</p></td>
+        </tr>
+
+    
+
+        <tr>
+            
+                <td class="name"><code>timeBasis</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type">String</span>
+
+
+
+            
+            </td>
+
+            
+                <td class="attributes">
+                
+                    &lt;optional><br>
+                
+
+                
+
+                
+                </td>
+            
+
+            
+                <td class="default">
+                
+                    <code>null</code>
+                
+                </td>
+            
+
+            <td class="description last"><p>輸入時間口徑字串'open'(以K線開盤時刻計，同既有)或'span'(計入每根K線之時距，須同時給opt.intervalSec)，給予時附加於策略之settings.timeBasis，null或未給為不附加(等同'open')，預設null</p></td>
         </tr>
 
     
@@ -2909,7 +3228,7 @@ console.log(mUnit.stopMode) //策略檔之settings另含uIni 10000與unit(補齊
                 </td>
             
 
-            <td class="description last"><p>輸入基礎單位選項一般物件{rule,buffer,units}(rule為交易規則{stepSize,minQty,minNotional}，各為有效數字或數字字串且大於0，可另含查得時刻與來源等記錄欄；buffer為非負數，null或未給為0.1；units為正整數，null或未給為1；介面同w-trade-backtest之settings.unit)，給予時才動態載入w-trade-backtest(&gt;=1.1.40)之buildBaseUnitNotional(檔不存在或無預設匯出之函數時throw <code>opt.unit requires w-trade-backtest &gt;= 1.1.40 (src/buildBaseUnitNotional.mjs)…</code>；未給時不載入)，以之檢測選項並以價格1試算一次(步長格數超過安全整數或數量與名義超出雙精度範圍即throw；實際價位遠低於1且步長極小、或遠高於1而名義超出雙精度範圍者，於回測時才拋錯)，通過後複製並將rule三欄、buffer、units之數字字串轉為數值(units為整數)、補齊buffer與units(不寫入null)，寫入策略之settings.unit(每個策略各一份)，無效時throw(訊息以<code>invalid opt.unit</code>起頭、不含輸入值)，null或未給為不使用基礎單位，預設null</p></td>
+            <td class="description last"><p>輸入基礎單位選項一般物件{rule,buffer,units}(rule為交易規則{stepSize,minQty,minNotional}，各為有效數字或數字字串且大於0，可另含查得時刻與來源等記錄欄；buffer為非負數，null或未給為0.1；units為正整數，null或未給為1；介面同w-trade-backtest之settings.unit)，給予時才動態載入w-trade-backtest(&gt;=1.1.40)之buildBaseUnitNotional(檔不存在或無預設匯出之函數時throw <code>opt.unit requires w-trade-backtest &gt;= 1.1.40 (src/buildBaseUnitNotional.mjs)…</code>；未給時不載入)，以之檢測選項並以價格1試算一次(步長格數超過安全整數或數量與名義超出雙精度範圍即throw；實際價位遠低於1且步長極小、或遠高於1而名義超出雙精度範圍者，於回測時才拋錯)，通過後複製，並以其回傳之轉型後選項(rule三欄、buffer、units皆為數值，未給之buffer與units已補預設，不寫入null)覆蓋副本之對應欄位(本套件不另自行轉換；交易規則之其他欄位原樣保留)，寫入策略之settings.unit(每個策略各一份)，無效時throw(訊息以<code>invalid opt.unit</code>起頭、不含輸入值)，null或未給為不使用基礎單位，預設null</p></td>
         </tr>
 
     
@@ -3778,13 +4097,13 @@ sid已含各cond之門檻，故同組keys之不同門檻組合對應不同sid，
     <h5 class="h5-examples">Example</h5>
     
     <pre class="prettyprint"><code>let conds = [
-    { key: 'btc_price_4hr_ma_1day', sym: '>', th: 0.05 },
-    { key: 'btc_index_rsi_4hr', sym: '&lt;', th: -0.2 },
+    { key: 'price_ohlc_Close_param_ma_1day', sym: '>', th: 0.05 },
+    { key: 'index_ohlc_none_RSI_rsi_4hr', sym: '&lt;', th: -0.2 },
 ]
 
 let sid = genSid('btc', '4hr', 'long', conds)
 console.log(sid)
-// => 'long ║ p_ma_1day>0.05 ║ i_rsi_4hr&lt;-0.2'</code></pre>
+// => 'long ║ p_ohlc_c_param_ma_1day>0.05 ║ i_ohlc_none_RSI_rsi_4hr&lt;-0.2'</code></pre>
 
 
 
@@ -3956,7 +4275,7 @@ console.log(sid)
 
     
 
-    <h4 class="name" id="genStrategyFileName"><span class="type-signature"></span>genStrategyFileName<span class="signature">(coin, interval, mode, keys, settings, summary)</span><span class="type-signature"> &rarr; {String}</span></h4>
+    <h4 class="name" id="genStrategyFileName"><span class="type-signature"></span>genStrategyFileName<span class="signature">(coin, interval, mode, keys, settings, summary, opt<span class="signature-attributes">opt</span>)</span><span class="type-signature"> &rarr; {String}</span></h4>
 
     
 
@@ -3967,20 +4286,22 @@ console.log(sid)
     
     <dt class="tag-description">Description:</dt>
     <dd class="tag-description"><ul class="dummy"><li><p>產生策略儲存檔名</p>
-<p>檔名為<code>${mode}_${levelNumTrade}_${hash}.json</code>，hash為md5(<code>${coin}:${interval}:${tid}:${levelNumTrade}</code>)取前16碼(64bits)
-tid由genTid以coin、interval、mode與keys產生，levelNumTrade由calcLevelNumTrade以summary.numTrade產生
-檔名為(coin,interval,tid,levelNumTrade)之純函數且與求解結果(等效年化盈虧)無關，故同tkid恆對應同一檔名，
+<p>檔名為<code>${mode}_${levelNumTrade}_${hash}.json</code>，hash為md5(<code>${coin}:${interval}:${tkid}</code>)取前16碼(64bits)，tkid為<code>${tid}:${levelNumTrade}</code>(未給opt.levelNumTradeBounds時，即md5(<code>${coin}:${interval}:${tid}:${levelNumTrade}</code>)，同既有)
+tid由genTid以coin、interval、mode與keys產生，levelNumTrade由calcLevelNumTrade以summary.numTrade(與opt.levelNumTradeBounds)產生
+給opt.levelNumTradeBounds(自訂級距之下界)時，tkid為<code>${tid}:${levelNumTrade}@${下界以逗號串接}</code>，故級距設定不同者之檔名必不相同(雜湊輸入不同)，同一資料夾混用不同級距設定時互不覆寫；檔名之級距段仍為級距代碼(數字)，樣式不變
+檔名為(coin,interval,tkid)之純函數且與求解結果(等效年化盈虧)無關，故同tkid恆對應同一檔名，
 存檔端可直接組出檔名以fsIsFile查詢既有策略(O(1))，不需列舉全庫，且更新為原地覆寫，結構上不會出現同tkid多檔
 因genTid會剔除<code>${coin}_</code>與<code>${interval}_</code>樣式，不同幣種或週期之同組keys會得到相同tid，故hash輸入需含coin與interval以避免跨幣種/跨週期碰撞
 採定長雜湊係因NTFS單一檔名段上限為255字元(UTF-16計，LongPathsEnabled無法放寬)，keys個數多時舊式<code>${tid} ⊙ ...</code>檔名會超限
-settings目前未參與檔名組成(含uIni與基礎單位選項unit；給unit只改每單名義，不改進場與交易次數，故同一策略之檔名不變)</p>
+settings目前未參與檔名組成(含uIni、基礎單位選項unit與時間口徑intervalSec、timeBasis；給unit只改每單名義、給timeBasis為'span'只改持倉天數與回測天數，皆不改進場與交易次數，故同一策略之檔名不變)
+opt.levelNumTradeBounds給予而無效時throw(訊息為<code>invalid opt.levelNumTradeBounds: must be a non-empty array of at most 101 strictly increasing positive integers</code>，不含輸入值)</p>
 <p>Unit Test: <a href="https://github.com/yuda-lyu/w-trade-solve/blob/master/test/unit-genStrategyFileName.test.mjs">Github</a></p></li></ul></dd>
     
 
     
     <dt class="tag-source">Source:</dt>
     <dd class="tag-source"><ul class="dummy"><li>
-        <a href="genStrategyFileName.mjs.html">genStrategyFileName.mjs</a>, <a href="genStrategyFileName.mjs.html#line41">line 41</a>
+        <a href="genStrategyFileName.mjs.html">genStrategyFileName.mjs</a>, <a href="genStrategyFileName.mjs.html#line53">line 53</a>
     </li></ul></dd>
     
 
@@ -4027,7 +4348,7 @@ settings目前未參與檔名組成(含uIni與基礎單位選項unit；給unit�
 
     <h5 class="h5-examples">Example</h5>
     
-    <pre class="prettyprint"><code>let keys = ['btc_price_4hr_ma_1day']
+    <pre class="prettyprint"><code>let keys = ['price_ohlc_Close_param_ma_1day']
 
 let settings = { uIni: 1000, uTrade: 1, rTakeProfit: 0.05, rStopLoss: 0.03, rFee: 0.0005 }
 
@@ -4035,8 +4356,14 @@ let summary = { numTrade: 30, rEquivalentCumuProfitOrLossFinalNormYear: '31.25%'
 
 let fn = genStrategyFileName('btc', '4hr', 'long', keys, settings, summary)
 console.log(fn)
-// => 'long_12_9fce6961e8f56493.json'
-//tid為'long ║ p_ma_1day', 級距為12, hash為md5('btc:4hr:long ║ p_ma_1day:12')前16碼</code></pre>
+// => 'long_12_b13ab15faf71e367.json'
+//tid為'long ║ p_ohlc_c_param_ma_1day', 級距為12, hash為md5('btc:4hr:long ║ p_ohlc_c_param_ma_1day:12')前16碼
+
+//自訂級距之下界, 級距為不大於交易次數之最大下界(此為20), hash輸入之tkid另帶級距設定
+let fnB = genStrategyFileName('btc', '4hr', 'long', keys, settings, summary, { levelNumTradeBounds: [1, 3, 6, 10, 20, 40] })
+console.log(fnB)
+// => 'long_20_e00771837f8f1f5c.json'
+//hash為md5('btc:4hr:long ║ p_ohlc_c_param_ma_1day:20@1,3,6,10,20,40')前16碼</code></pre>
 
 
 
@@ -4054,7 +4381,11 @@ console.log(fn)
         <th>Type</th>
 
         
+        <th>Attributes</th>
+        
 
+        
+        <th>Default</th>
         
 
         <th class="last">Description</th>
@@ -4080,7 +4411,19 @@ console.log(fn)
             </td>
 
             
+                <td class="attributes">
+                
 
+                
+
+                
+                </td>
+            
+
+            
+                <td class="default">
+                
+                </td>
             
 
             <td class="description last"><p>輸入幣種名稱字串，例如'btc'</p></td>
@@ -4104,7 +4447,19 @@ console.log(fn)
             </td>
 
             
+                <td class="attributes">
+                
 
+                
+
+                
+                </td>
+            
+
+            
+                <td class="default">
+                
+                </td>
             
 
             <td class="description last"><p>輸入K線週期字串，例如'4hr'</p></td>
@@ -4128,7 +4483,19 @@ console.log(fn)
             </td>
 
             
+                <td class="attributes">
+                
 
+                
+
+                
+                </td>
+            
+
+            
+                <td class="default">
+                
+                </td>
             
 
             <td class="description last"><p>輸入交易方向字串，可選'long'或'short'</p></td>
@@ -4152,7 +4519,19 @@ console.log(fn)
             </td>
 
             
+                <td class="attributes">
+                
 
+                
+
+                
+                </td>
+            
+
+            
+                <td class="default">
+                
+                </td>
             
 
             <td class="description last"><p>輸入指標key字串陣列</p></td>
@@ -4176,7 +4555,19 @@ console.log(fn)
             </td>
 
             
+                <td class="attributes">
+                
 
+                
+
+                
+                </td>
+            
+
+            
+                <td class="default">
+                
+                </td>
             
 
             <td class="description last"><p>輸入策略設定物件</p></td>
@@ -4200,10 +4591,132 @@ console.log(fn)
             </td>
 
             
+                <td class="attributes">
+                
 
+                
+
+                
+                </td>
+            
+
+            
+                <td class="default">
+                
+                </td>
             
 
             <td class="description last"><p>輸入回測統計摘要物件，需含numTrade(交易次數)欄位</p></td>
+        </tr>
+
+    
+
+        <tr>
+            
+                <td class="name"><code>opt</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type">Object</span>
+
+
+
+            
+            </td>
+
+            
+                <td class="attributes">
+                
+                    &lt;optional><br>
+                
+
+                
+
+                
+                </td>
+            
+
+            
+                <td class="default">
+                
+                    <code>{}</code>
+                
+                </td>
+            
+
+            <td class="description last"><p>輸入設定物件，預設{}</p>
+                <h6>Properties</h6>
+                
+
+<table class="params">
+    <thead>
+    <tr>
+        
+        <th>Name</th>
+        
+
+        <th>Type</th>
+
+        
+        <th>Attributes</th>
+        
+
+        
+        <th>Default</th>
+        
+
+        <th class="last">Description</th>
+    </tr>
+    </thead>
+
+    <tbody>
+    
+
+        <tr>
+            
+                <td class="name"><code>levelNumTradeBounds</code></td>
+            
+
+            <td class="type">
+            
+                
+<span class="param-type">Array</span>
+
+
+
+            
+            </td>
+
+            
+                <td class="attributes">
+                
+                    &lt;optional><br>
+                
+
+                
+
+                
+                </td>
+            
+
+            
+                <td class="default">
+                
+                    <code>null</code>
+                
+                </td>
+            
+
+            <td class="description last"><p>輸入自訂級距之下界陣列(同calcLevelNumTrade之opt.levelNumTradeBounds；以estimKeys之opt.levelNumTradeBounds求得之策略須給同一設定，可取自策略檔之solve.levelNumTradeBounds)，null或未給為採預設級距，預設null</p></td>
+        </tr>
+
+    
+    </tbody>
+</table>
+
+            </td>
         </tr>
 
     
@@ -4324,9 +4837,9 @@ tid僅由mode與keys決定，未含各key之門檻條件，故同組keys之各�
 
     <h5 class="h5-examples">Example</h5>
     
-    <pre class="prettyprint"><code>let tid = genTid('btc', '4hr', 'long', ['btc_price_4hr_ma_1day', 'btc_index_rsi_4hr'])
+    <pre class="prettyprint"><code>let tid = genTid('btc', '4hr', 'long', ['price_ohlc_Close_param_ma_1day', 'index_ohlc_none_RSI_rsi_4hr'])
 console.log(tid)
-// => 'long ║ p_ma_1day ║ i_rsi_4hr'</code></pre>
+// => 'long ║ p_ohlc_c_param_ma_1day ║ i_ohlc_none_RSI_rsi_4hr'</code></pre>
 
 
 
@@ -5170,21 +5683,21 @@ fs.mkdirSync(fd, { recursive: true })
 
 //以genStrategyFileName之檔名規則儲存策略檔, 檔名為雜湊格式, 識別資訊由檔內json承載
 let summary = { numTrade: 30, rEquivalentCumuProfitOrLossFinalNormYear: '31.25%' }
-let fn = genStrategyFileName('btc', '4hr', 'long', ['btc_4hr_ma_1day'], {}, summary)
-let data = { tid: 'long ║ ma_1day', tkid: 'long ║ ma_1day:12', levelNumTrade: 12, mode: 'long', summary }
+let fn = genStrategyFileName('btc', '4hr', 'long', ['price_ohlc_Close_param_ma_1day'], {}, summary)
+let data = { tid: 'long ║ p_ohlc_c_param_ma_1day', tkid: 'long ║ p_ohlc_c_param_ma_1day:12', levelNumTrade: 12, mode: 'long', summary }
 fs.writeFileSync(`${fd}/${fn}`, JSON.stringify(data), 'utf8')
 
 console.log(readStrategies(fd))
 // => [
 //   {
-//     path: './tmp/data-strategy/long_12_a7578526a1fc57d8.json',
-//     name: 'long_12_a7578526a1fc57d8.json',
-//     tkid: 'long ║ ma_1day:12',
-//     tid: 'long ║ ma_1day',
+//     path: './tmp/data-strategy/long_12_b13ab15faf71e367.json',
+//     name: 'long_12_b13ab15faf71e367.json',
+//     tkid: 'long ║ p_ohlc_c_param_ma_1day:12',
+//     tid: 'long ║ p_ohlc_c_param_ma_1day',
 //     levelNumTrade: '12',
 //     rEquivalentCumuProfitOrLossFinalNormYear: '31.25%',
 //     mode: 'long',
-//     ps: [ 'ma_1day' ]
+//     ps: [ 'p_ohlc_c_param_ma_1day' ]
 //   }
 // ]</code></pre>
 
@@ -5467,7 +5980,7 @@ console.log(readStrategies(fd))
 <br class="clear">
 
 <footer>
-    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 4.0.5</a> on Thu Nov 19 2026 01:42:14 GMT+0800 (台北標準時間) using the <a href="https://github.com/clenemt/docdash">docdash</a> theme.
+    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 4.0.5</a> on Thu Nov 19 2026 03:37:57 GMT+0800 (台北標準時間) using the <a href="https://github.com/clenemt/docdash">docdash</a> theme.
 </footer>
 
 <script>prettyPrint();</script>

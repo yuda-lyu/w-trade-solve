@@ -21,13 +21,13 @@ import cont from './cont.mjs'
  * @example
  *
  * let conds = [
- *     { key: 'btc_price_4hr_ma_1day', sym: '>', th: 0.05 },
- *     { key: 'btc_index_rsi_4hr', sym: '<', th: -0.2 },
+ *     { key: 'price_ohlc_Close_param_ma_1day', sym: '>', th: 0.05 },
+ *     { key: 'index_ohlc_none_RSI_rsi_4hr', sym: '<', th: -0.2 },
  * ]
  *
  * let sid = genSid('btc', '4hr', 'long', conds)
  * console.log(sid)
- * // => 'long ║ p_ma_1day>0.05 ║ i_rsi_4hr<-0.2'
+ * // => 'long ║ p_ohlc_c_param_ma_1day>0.05 ║ i_ohlc_none_RSI_rsi_4hr<-0.2'
  *
  */
 let genSid = (coin, interval, mode, conds) => {

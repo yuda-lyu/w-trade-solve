@@ -33,10 +33,10 @@ async function test() {
         arrParam.push({ time, param: Math.sin(i * 0.17) })
     }
     fs.writeFileSync(path.resolve(fdOhlc, 'btc_price_4hr.json'), JSON.stringify(arrOhlc), 'utf8')
-    fs.writeFileSync(path.resolve(fdParam, 'btc_4hr_ma_1day.json'), JSON.stringify(arrParam), 'utf8')
+    fs.writeFileSync(path.resolve(fdParam, 'price_ohlc_Close_param_ma_1day.json'), JSON.stringify(arrParam), 'utf8')
 
     //keys, 待率定門檻之指標 key, 各 key 於 fdParam 內須有對應之 `${key}.json`
-    let keys = ['btc_4hr_ma_1day']
+    let keys = ['price_ohlc_Close_param_ma_1day']
 
     //estimKeys, 以最佳化演算法率定[止損, 止盈, 各 key 門檻], 逐次以 runStrategy 回測並取 fitness 最小者
     //  滿足 thNumTrade / thRWin / thREquivalentCumuProfitOrLossFinalNormYear 三門檻之參數組會存入 fdData
@@ -68,18 +68,19 @@ async function test() {
 
     //readStrategies, 讀回 fdData 內之策略, tkid 為`${tid}:${交易次數級距}`, 同 tkid 僅保留等效年化盈虧最佳者
     let ss = wts.readStrategies(fdData, { readContent: true })
+    ss.sort((a, b) => (a.tkid < b.tkid ? -1 : (a.tkid > b.tkid ? 1 : 0))) //列檔順序隨作業系統而異, 依 tkid 排序使輸出固定
     console.log(ss.map((s) => {
         return `${s.tkid} → ${s.rEquivalentCumuProfitOrLossFinalNormYear}`
     }))
     // => [
-    //   'long ║ ma_1day:1 → 194.67%',
-    //   'long ║ ma_1day:11 → 839.50%',
-    //   'long ║ ma_1day:2 → 644.83%'
+    //   'long ║ p_ohlc_c_param_ma_1day:1 → 194.67%',
+    //   'long ║ p_ohlc_c_param_ma_1day:11 → 839.50%',
+    //   'long ║ p_ohlc_c_param_ma_1day:2 → 644.83%'
     // ]
 
     //策略內容含還原後之 conds(門檻已扣除平移量)與回測所用之 settings
     console.log(ss[0].data.conds, ss[0].data.settings)
-    // => [ { key: 'btc_4hr_ma_1day', sym: '<', th: 0.3 } ] {
+    // => [ { key: 'price_ohlc_Close_param_ma_1day', sym: '<', th: 0.3 } ] {
     //   uIni: 1000,
     //   uTrade: 1,
     //   rTakeProfit: 0.03,
@@ -89,7 +90,7 @@ async function test() {
 
     //genTid, 策略種類識別碼, 僅由 mode 與 keys 決定, 並將 `${name}_`、`${interval}_` 等樣式縮寫
     console.log(wts.genTid('btc', '4hr', 'long', keys))
-    // => 'long ║ ma_1day'
+    // => 'long ║ p_ohlc_c_param_ma_1day'
 
     //calcLevelNumTrade, 交易次數之級距代碼, 使不同交易次數規模之策略各自保留最佳者
     console.log(wts.calcLevelNumTrade(3), wts.calcLevelNumTrade(30), wts.calcLevelNumTrade(300))
@@ -98,7 +99,7 @@ async function test() {
     //genStrategyFileName, 策略儲存檔名, 為`${mode}_${級距}_${雜湊16碼}.json`, 雜湊由coin、interval、tid與級距算出
     //  檔名為tkid之純函數且長度固定, 同tkid恆對應同一檔名, 故存檔端可直查覆寫而不需列舉全庫
     console.log(wts.genStrategyFileName('btc', '4hr', 'long', keys, {}, { numTrade: 30, rEquivalentCumuProfitOrLossFinalNormYear: '31.25%' }))
-    // => 'long_12_a7578526a1fc57d8.json'
+    // => 'long_12_b13ab15faf71e367.json'
 
     //calcFitness, 求解所用之目標函數值, 越小越佳, 由勝率(權重 2)與等效年化盈虧(權重 1)組成
     console.log(wts.calcFitness({ uIni: 1000 }, { numTrade: 30, uEquityFinal: 1200, rWin: '60%', rEquivalentCumuProfitOrLossFinalNormYear: '25%' }))

@@ -45,21 +45,21 @@ let ptnFnHash = /^(long|short)_\d+_[0-9a-f]{16}\.json$/
  *
  * //以genStrategyFileName之檔名規則儲存策略檔, 檔名為雜湊格式, 識別資訊由檔內json承載
  * let summary = { numTrade: 30, rEquivalentCumuProfitOrLossFinalNormYear: '31.25%' }
- * let fn = genStrategyFileName('btc', '4hr', 'long', ['btc_4hr_ma_1day'], {}, summary)
- * let data = { tid: 'long ║ ma_1day', tkid: 'long ║ ma_1day:12', levelNumTrade: 12, mode: 'long', summary }
+ * let fn = genStrategyFileName('btc', '4hr', 'long', ['price_ohlc_Close_param_ma_1day'], {}, summary)
+ * let data = { tid: 'long ║ p_ohlc_c_param_ma_1day', tkid: 'long ║ p_ohlc_c_param_ma_1day:12', levelNumTrade: 12, mode: 'long', summary }
  * fs.writeFileSync(`${fd}/${fn}`, JSON.stringify(data), 'utf8')
  *
  * console.log(readStrategies(fd))
  * // => [
  * //   {
- * //     path: './tmp/data-strategy/long_12_a7578526a1fc57d8.json',
- * //     name: 'long_12_a7578526a1fc57d8.json',
- * //     tkid: 'long ║ ma_1day:12',
- * //     tid: 'long ║ ma_1day',
+ * //     path: './tmp/data-strategy/long_12_b13ab15faf71e367.json',
+ * //     name: 'long_12_b13ab15faf71e367.json',
+ * //     tkid: 'long ║ p_ohlc_c_param_ma_1day:12',
+ * //     tid: 'long ║ p_ohlc_c_param_ma_1day',
  * //     levelNumTrade: '12',
  * //     rEquivalentCumuProfitOrLossFinalNormYear: '31.25%',
  * //     mode: 'long',
- * //     ps: [ 'ma_1day' ]
+ * //     ps: [ 'p_ohlc_c_param_ma_1day' ]
  * //   }
  * // ]
  *

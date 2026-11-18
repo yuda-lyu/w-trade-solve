@@ -19,9 +19,9 @@ import cont from './cont.mjs'
  * @returns {String} 回傳策略種類識別碼tid字串
  * @example
  *
- * let tid = genTid('btc', '4hr', 'long', ['btc_price_4hr_ma_1day', 'btc_index_rsi_4hr'])
+ * let tid = genTid('btc', '4hr', 'long', ['price_ohlc_Close_param_ma_1day', 'index_ohlc_none_RSI_rsi_4hr'])
  * console.log(tid)
- * // => 'long ║ p_ma_1day ║ i_rsi_4hr'
+ * // => 'long ║ p_ohlc_c_param_ma_1day ║ i_ohlc_none_RSI_rsi_4hr'
  *
  */
 let genTid = (coin, interval, mode, keys) => {

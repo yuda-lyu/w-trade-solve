@@ -458,6 +458,18 @@ describe('estimKeys之研究用本金與基礎單位', function() {
             assert.strictEqual(out.withUnitFdData, false)
         })
 
+        it('U1: 落地之settings.unit取自buildBaseUnitNotional之回傳(替身回傳與輸入之轉型結果不同之值), 交易規則之記錄欄與unit之其他欄原樣保留、鍵序不變', function() {
+            //WS-BU-02: 本套件不自行轉換(不再以cdbl、cint重做), 落地者即回測套件轉型後之unit
+            let out = runNoBu(this, 'stub')
+            assert.strictEqual(out.hook, 'stub', '前提: 鉤子生效, 替身之回傳(stepSize 0.01)與輸入之轉型結果(0.001)不同')
+            assert.ok(out.nFiles > 0)
+            out.settingsUnits.forEach((u) => {
+                assert.deepStrictEqual(u, { rule: { stepSize: 0.01, minQty: 0.02, minNotional: 30, asOf: '2026-01-01T00:00:00', source: 'exchangeInfo' }, buffer: 0.25, units: 3, note: 'keep' })
+                assert.deepStrictEqual(Object.keys(u), ['rule', 'buffer', 'units', 'note'])
+                assert.deepStrictEqual(Object.keys(u.rule), ['stepSize', 'minQty', 'minNotional', 'asOf', 'source'])
+            })
+        })
+
     })
 
     describe('未給與無效之選項', function() {

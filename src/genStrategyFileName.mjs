@@ -1,19 +1,23 @@
 import crypto from 'crypto'
+import get from 'lodash-es/get.js'
 import cint from 'wsemi/src/cint.mjs'
 import genTid from './genTid.mjs'
 import calcLevelNumTrade from './calcLevelNumTrade.mjs'
+import { parseLevelNumTradeBounds, tagLevelNumTrade } from './_levelNumTradeBounds.mjs'
 
 
 /**
  * 產生策略儲存檔名
  *
- * 檔名為`${mode}_${levelNumTrade}_${hash}.json`，hash為md5(`${coin}:${interval}:${tid}:${levelNumTrade}`)取前16碼(64bits)
- * tid由genTid以coin、interval、mode與keys產生，levelNumTrade由calcLevelNumTrade以summary.numTrade產生
- * 檔名為(coin,interval,tid,levelNumTrade)之純函數且與求解結果(等效年化盈虧)無關，故同tkid恆對應同一檔名，
+ * 檔名為`${mode}_${levelNumTrade}_${hash}.json`，hash為md5(`${coin}:${interval}:${tkid}`)取前16碼(64bits)，tkid為`${tid}:${levelNumTrade}`(未給opt.levelNumTradeBounds時，即md5(`${coin}:${interval}:${tid}:${levelNumTrade}`)，同既有)
+ * tid由genTid以coin、interval、mode與keys產生，levelNumTrade由calcLevelNumTrade以summary.numTrade(與opt.levelNumTradeBounds)產生
+ * 給opt.levelNumTradeBounds(自訂級距之下界)時，tkid為`${tid}:${levelNumTrade}@${下界以逗號串接}`，故級距設定不同者之檔名必不相同(雜湊輸入不同)，同一資料夾混用不同級距設定時互不覆寫；檔名之級距段仍為級距代碼(數字)，樣式不變
+ * 檔名為(coin,interval,tkid)之純函數且與求解結果(等效年化盈虧)無關，故同tkid恆對應同一檔名，
  * 存檔端可直接組出檔名以fsIsFile查詢既有策略(O(1))，不需列舉全庫，且更新為原地覆寫，結構上不會出現同tkid多檔
  * 因genTid會剔除`${coin}_`與`${interval}_`樣式，不同幣種或週期之同組keys會得到相同tid，故hash輸入需含coin與interval以避免跨幣種/跨週期碰撞
  * 採定長雜湊係因NTFS單一檔名段上限為255字元(UTF-16計，LongPathsEnabled無法放寬)，keys個數多時舊式`${tid} ⊙ ...`檔名會超限
- * settings目前未參與檔名組成(含uIni與基礎單位選項unit；給unit只改每單名義，不改進場與交易次數，故同一策略之檔名不變)
+ * settings目前未參與檔名組成(含uIni、基礎單位選項unit與時間口徑intervalSec、timeBasis；給unit只改每單名義、給timeBasis為'span'只改持倉天數與回測天數，皆不改進場與交易次數，故同一策略之檔名不變)
+ * opt.levelNumTradeBounds給予而無效時throw(訊息為`invalid opt.levelNumTradeBounds: must be a non-empty array of at most 101 strictly increasing positive integers`，不含輸入值)
  *
  * Unit Test: {@link https://github.com/yuda-lyu/w-trade-solve/blob/master/test/unit-genStrategyFileName.test.mjs Github}
  * @function
@@ -23,10 +27,12 @@ import calcLevelNumTrade from './calcLevelNumTrade.mjs'
  * @param {Array} keys 輸入指標key字串陣列
  * @param {Object} settings 輸入策略設定物件
  * @param {Object} summary 輸入回測統計摘要物件，需含numTrade(交易次數)欄位
+ * @param {Object} [opt={}] 輸入設定物件，預設{}
+ * @param {Array} [opt.levelNumTradeBounds=null] 輸入自訂級距之下界陣列(同calcLevelNumTrade之opt.levelNumTradeBounds；以estimKeys之opt.levelNumTradeBounds求得之策略須給同一設定，可取自策略檔之solve.levelNumTradeBounds)，null或未給為採預設級距，預設null
  * @returns {String} 回傳策略儲存檔名字串
  * @example
  *
- * let keys = ['btc_price_4hr_ma_1day']
+ * let keys = ['price_ohlc_Close_param_ma_1day']
  *
  * let settings = { uIni: 1000, uTrade: 1, rTakeProfit: 0.05, rStopLoss: 0.03, rFee: 0.0005 }
  *
@@ -34,11 +40,20 @@ import calcLevelNumTrade from './calcLevelNumTrade.mjs'
  *
  * let fn = genStrategyFileName('btc', '4hr', 'long', keys, settings, summary)
  * console.log(fn)
- * // => 'long_12_9fce6961e8f56493.json'
- * //tid為'long ║ p_ma_1day', 級距為12, hash為md5('btc:4hr:long ║ p_ma_1day:12')前16碼
+ * // => 'long_12_b13ab15faf71e367.json'
+ * //tid為'long ║ p_ohlc_c_param_ma_1day', 級距為12, hash為md5('btc:4hr:long ║ p_ohlc_c_param_ma_1day:12')前16碼
+ *
+ * //自訂級距之下界, 級距為不大於交易次數之最大下界(此為20), hash輸入之tkid另帶級距設定
+ * let fnB = genStrategyFileName('btc', '4hr', 'long', keys, settings, summary, { levelNumTradeBounds: [1, 3, 6, 10, 20, 40] })
+ * console.log(fnB)
+ * // => 'long_20_e00771837f8f1f5c.json'
+ * //hash為md5('btc:4hr:long ║ p_ohlc_c_param_ma_1day:20@1,3,6,10,20,40')前16碼
  *
  */
-let genStrategyFileName = (coin, interval, mode, keys, settings, summary) => {
+let genStrategyFileName = (coin, interval, mode, keys, settings, summary, opt = {}) => {
+
+    //levelNumTradeBounds, 自訂級距之下界(給予時檢測並轉為數值), 未給為null採預設級距
+    let levelNumTradeBounds = parseLevelNumTradeBounds(get(opt, 'levelNumTradeBounds', null), 'opt.levelNumTradeBounds')
 
     //tid
     let tid = genTid(coin, interval, mode, keys)
@@ -48,10 +63,10 @@ let genStrategyFileName = (coin, interval, mode, keys, settings, summary) => {
     let numTrade = cint(summary.numTrade)
 
     //levelNumTrade
-    let levelNumTrade = calcLevelNumTrade(numTrade)
+    let levelNumTrade = calcLevelNumTrade(numTrade, { levelNumTradeBounds })
 
-    //hash, 含coin與interval避免跨幣種/跨週期之同名tid碰撞
-    let hash = crypto.createHash('md5').update(`${coin}:${interval}:${tid}:${levelNumTrade}`, 'utf8').digest('hex').slice(0, 16)
+    //hash, 含coin與interval避免跨幣種/跨週期之同名tid碰撞; 級距段於給自訂級距時另帶級距設定(未給時同既有)
+    let hash = crypto.createHash('md5').update(`${coin}:${interval}:${tid}:${tagLevelNumTrade(levelNumTrade, levelNumTradeBounds)}`, 'utf8').digest('hex').slice(0, 16)
 
     //fnStrategy
     let fnStrategy = `${mode}_${levelNumTrade}_${hash}.json`
