@@ -7,6 +7,7 @@
 ## 最近一次驗證
 
 - 版本基準:2.0.43(`package.json` 版號未動,發布由使用者之流程處理;`w-trade-backtest` 下限現為 `^1.1.44`,已 ≥ 1.1.43).
+- 2026-11-20(跟跑 wsemi 1.9.70 之訊息改字,`package.json` 之 `wsemi` 為 `^1.9.70`):`randomIntsNdpRange` 範圍錯誤訊息改為 `invalid vstart: must be <= vend`(不帶輸入值),`unit-estimComps` 之「向已清空之類別挑選」案之期望依此改字;產品行為不變(空類別仍拋錯);`src/` 與 `test/` 無其他比對 wsemi 訊息之處;全套 `npm test` 全綠 286 案、0 pending.
 - 2026-11-19(條件門檻之格點、交易次數之級距、每根 K 線之秒數與時間口徑、止盈止損候選之檢測、覆寫前比對 `keys`、`unit` 取自回測套件之回傳):全套 `npm test` 全綠 286 案、0 pending(既有 232 案 + `unit-estimKeysGridLevel` 26 案 + `unit-estimKeysTimeBasis` 13 案 + `unit-estimKeysGuard` 14 案 + `unit-estimKeysBaseUnit`〈U1〉1 案);未給新選項之前後對拍(固定亂數與時鐘;確定性函數表 + 求解流程 11 段、策略檔 43 個)與 2.0.43 逐位相同,止盈止損候選給數字字串者只有 `solve.thsTp`／`solve.thsSl` 之記錄由字串變數值(見經驗檔);`node g.mjs` 輸出與 README 相符.
 - 2026-11-18(研究用本金與基礎單位,基準 2.0.39):全套全綠 232 案;與 2.0.39 之對拍 0 處不同.
 

@@ -122,11 +122,12 @@ describe('estimComps', function() {
         })
 
         it('向已清空之類別挑選時, 取樣範圍上界為-1而throw', async function() {
-            //pkn以randomIntsNdpRange(0, size(arr)-1, n)取樣, 空陣列時上界為-1
+            //pkn以randomIntsNdpRange(0, size(arr)-1, n)取樣, 空陣列時上界為-1, vstart(0)大於vend(-1)
+            //wsemi 1.9.70起範圍錯誤訊息為'invalid vstart: must be <= vend'(不帶輸入值), 須指出vstart與vend之大小關係, 以別於'invalid vstart: must be an integer'
             await assert.rejects(call({
                 comps: '1,0,0',
                 opt: { funFilterKeysNorm: empty },
-            }), /vstart\[0\] > vend\[-1\]/)
+            }), /invalid vstart: must be <= vend/)
         })
 
         it('挑選個數超過該類key數時, 取樣結果以該類key數為上限', async function() {
