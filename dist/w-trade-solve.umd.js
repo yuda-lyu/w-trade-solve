@@ -1,5 +1,5 @@
 /*!
- * w-trade-solve v2.0.47
+ * w-trade-solve v2.0.48
  * (c) 2018-2021 yuda-lyu(semisphere)
  * Released under the MIT License.
  */
