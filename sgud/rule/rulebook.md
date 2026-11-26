@@ -2,7 +2,7 @@
 
 本檔為套件設計與開發階段之規則帳本(藍圖),為要求程式碼須長成什麼樣,或由規格產出之測試(項目/說明/流程)有哪些,包含軸、單一擁有者、已知限制、破壞性變更紀錄,以及對應是哪些測試檔案或指令等,由agent自行編列、擴充與維護.當前已做到哪些記於`sgud/state/state.md`.過長時依類型拆為`rulebook_<類型>.md`,本檔只留索引.
 
-> 規則編號:本套件於 2.0.39 尚無編號慣例,自「研究用本金與基礎單位」起以 `WS-BU-<兩位數>` 編列(BU = base unit);後續新類型另立前綴:`WS-GL-<兩位數>`(GL = grid & level,條件門檻之格點與交易次數之級距)、`WS-KN-<兩位數>`(KN = key name,鍵名與期別)、`WS-TB-<兩位數>`(TB = time basis,每根 K 線之秒數與時間口徑)、`WS-TP-<兩位數>`(TP = take profit & stop loss,止盈止損候選).路徑為套件根相對路徑;測試以 `npm test`(mocha `--parallel`).
+> 規則編號:本套件於 2.0.39 尚無編號慣例,自「研究用本金與基礎單位」起以 `WS-BU-<兩位數>` 編列(BU = base unit);後續新類型另立前綴:`WS-GL-<兩位數>`(GL = grid & level,條件門檻之格點與交易次數之級距)、`WS-KN-<兩位數>`(KN = key name,鍵名與期別)、`WS-TB-<兩位數>`(TB = time basis,每根 K 線之秒數與時間口徑)、`WS-TP-<兩位數>`(TP = take profit & stop loss,止盈止損候選)、`WS-FL-<兩位數>`(FL = folder level,列舉層數).路徑為套件根相對路徑;測試以 `npm test`(mocha `--parallel`).
 
 ## 索引
 
@@ -14,6 +14,7 @@
 | 鍵名與期別(不依賴特定期別;期別標籤依實際時間跨度換算之鍵名;覆寫前比對舊檔之 `keys`) | WS-KN-01 ~ WS-KN-02 | 本檔 §4 |
 | 每根 K 線之秒數與時間口徑(`estimKeys` 之 `opt.intervalSec`、`opt.timeBasis`) | WS-TB-01 ~ WS-TB-05 | 本檔 §5 |
 | 止盈止損候選(`estimKeys` 之 `opt.thsTp`、`opt.thsSl` 之檢測;入庫篩選門檻維持無效用預設) | WS-TP-01 ~ WS-TP-02 | 本檔 §6 |
+| 列舉層數(呼叫 wsemi 列舉函數須明給層數;`readStrategies`) | WS-FL-01 | 本檔 §8 |
 
 ## 1. 研究用本金與基礎單位(`opt.uIni`、`opt.unit`)
 
@@ -128,3 +129,10 @@
 - 其餘入庫篩選門檻(`thNumTrade`、`thRWin`、`thREquivalentCumuProfitOrLossFinalNormYear`)無效時採預設、元素不報(WS-TP-02;提案 §12 第 2 點除 `thsTp`／`thsSl` 外).
 - 格點之形式(顯式陣列,各 key 共用)、混用級距設定是否硬性阻擋(不阻擋、識別內帶設定):提出方已裁定,照提案.
 - `opt.unit` 之動態載入(WS-BU-06,載入失敗拋 `opt.unit requires w-trade-backtest >= 1.1.40 …`)為既有之舊版容忍分支;回測套件下限已 ≥ 1.1.43 後該分支實際不可達,依主控「未給 `unit` 不載入該檔」之裁定保留,是否改靜態匯入待裁定.
+
+## 8. 列舉層數(呼叫 wsemi 列舉函數須明給層數,不依賴預設)
+
+- **WS-FL-01**:`fsTreeFolder`、`fsTreeFolderWithHash`、`fsGetFilesInFolder`、`fsGetFilesWithHashInFolder`、`fsGetFoldersInFolder`(含各 `*Core`)之第 2 參數為 `opt` 物件;wsemi 1.9.80 起 `opt.levelLimit` 為有效正整數才限層,**未給即窮舉全部層級**(舊版預設 1 層),第 2 參數給了而非物件(如舊寫法之數字)拋 `invalid opt: must be an object`.本套件之呼叫點須明給 `{ levelLimit: n }`,不省略第 2 參數;`package.json` 之 `wsemi` 下限為 `^1.9.80`.
+  - 語意:`readStrategies(fd, opt)` 只列舉 `fd` 第 1 層之檔案,子資料夾與其內檔案不列入(其 JSDoc 與測試規格同).
+  - 盤點指令:`git grep -nE "\b(fsTreeFolder|fsTreeFolderWithHash|fsGetFilesInFolder|fsGetFilesWithHashInFolder|fsGetFoldersInFolder)(Core)?\s*\(" -- . ':!dist' ':!docs'`;站點全集(2026-11-26)1 處:`src/readStrategies.mjs:85` 為 `{ levelLimit: 1 }`,已套;省略或數字為未套.
+  - 測試:`test/unit-readStrategies.test.mjs`〈僅列第1層, 子資料夾與其內檔案皆不列入〉(第 1 層放策略 `aa`、子資料夾放策略 `bb`,斷言只回 1 筆且為 `aa`).變異(鏡像根,2026-11-26):省略第 2 參數、`{}`、`{ levelLimit: 2 }` 皆只使該案轉紅;舊寫法數字 `1` 使 27 案轉紅(拋 `invalid opt`);對照全綠.

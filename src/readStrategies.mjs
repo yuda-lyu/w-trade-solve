@@ -81,8 +81,8 @@ let readStrategies = (fd, opt = {}) => {
         return []
     }
 
-    //vfps
-    let vfps = fsTreeFolder(fd)
+    //vfps, 僅列舉fd第1層(opt.levelLimit未給會窮舉全部層級, 故須明給1)
+    let vfps = fsTreeFolder(fd, { levelLimit: 1 })
     vfps = filter(vfps, { isFolder: false })
     // console.log('vfps', vfps)
 

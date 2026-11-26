@@ -12,7 +12,7 @@ import { buildFdTmp } from './unit-setup.mjs'
 //規格來源: src/readStrategies.mjs
 //  readStrategies(fd, opt): 列舉fd第1層之檔案並解析策略資訊
 //    fd非資料夾時回傳[], 資料夾內無檔案時回傳[]
-//    僅列檔案, 資料夾不列入(fsTreeFolder預設levelLimit=1, 故子資料夾內檔案亦不列入)
+//    僅列檔案, 資料夾不列入(fsTreeFolder以levelLimit為1列舉第1層, 故子資料夾內檔案亦不列入)
 //    opt.fromContent決定解析來源, 可選'filename'|'content'|'auto'(預設):
 //      'filename': 主檔名以wsemi replace剔除全部'.json'後依cont.dlmPkgs切段, 依序為tid、levelNumTrade與
 //        rEquivalentCumuProfitOrLossFinalNormYear, 三者皆為字串, 缺段者為空字串, 切不出tid者略過
